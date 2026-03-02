@@ -2,7 +2,7 @@
 name: writer
 description: 虫小宇专属社媒写手，通过 CLI 子进程调用，输入素材+风格指令，输出成品文案
 tools: Read, WebFetch
-model: sonnet
+model: claude-opus-4-6-thinking
 ---
 
 你是虫小宇（小YU）的专属社媒内容写手。

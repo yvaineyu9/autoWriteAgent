@@ -53,7 +53,7 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 
 ### 为什么用 CLI 子代理
 - **上下文隔离**：reviewer 完全看不到生成过程，审核更客观
-- **模型分配**：writer 用 sonnet（快+省），reviewer 用 opus（严格）
+- **模型分配**：所有子代理统一使用 `claude-opus-4-6-thinking`
 - **多平台并行**：多个 writer 可以后台同时运行
 - **稳定可靠**：不依赖 Task API，直接走 CLI
 
@@ -99,6 +99,7 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 ```bash
 cat /tmp/content_creation/writer_input_<platform>.md | \
 claude -p \
+  --model claude-opus-4-6-thinking \
   --allowedTools "Read,WebFetch" \
   --add-dir "$(pwd)" \
   2>/dev/null > /tmp/content_creation/draft_<platform>.md
@@ -106,9 +107,9 @@ claude -p \
 
 **多平台并行优化**：如果有多个平台，可以用 `&` 让多个 writer 同时运行：
 ```bash
-cat /tmp/content_creation/writer_input_xiaohongshu.md | claude -p --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_xiaohongshu.md &
-cat /tmp/content_creation/writer_input_wechat.md | claude -p --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_wechat.md &
-cat /tmp/content_creation/writer_input_twitter.md | claude -p --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_twitter.md &
+cat /tmp/content_creation/writer_input_xiaohongshu.md | claude -p --model claude-opus-4-6-thinking --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_xiaohongshu.md &
+cat /tmp/content_creation/writer_input_wechat.md | claude -p --model claude-opus-4-6-thinking --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_wechat.md &
+cat /tmp/content_creation/writer_input_twitter.md | claude -p --model claude-opus-4-6-thinking --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_twitter.md &
 wait
 ```
 
@@ -124,6 +125,7 @@ wait
 ```bash
 cat /tmp/content_creation/draft_<platform>.md | \
 claude -p \
+  --model claude-opus-4-6-thinking \
   --tools "" \
   --append-system-prompt "你是一个严格独立的内容审核员。按照以下标准逐项打分，输出纯 JSON（不要代码块标记），直接以{开头}结尾。评分维度（每项1-10分，总分60分，≥48分通过）：1.吸引力 2.信息价值 3.情绪共鸣 4.平台适配 5.行动引导 6.原创性。严格使用以下字段名：{\"total\":数字,\"pass\":true/false,\"scores\":{\"吸引力\":数字,\"信息价值\":数字,\"情绪共鸣\":数字,\"平台适配\":数字,\"行动引导\":数字,\"原创性\":数字},\"feedback\":\"修改建议或null\",\"highlights\":\"亮点\"}。不要增加任何额外字段。" \
   "请审核以上<平台名>平台的社媒内容" \
