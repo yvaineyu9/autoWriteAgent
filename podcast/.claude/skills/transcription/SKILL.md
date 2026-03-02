@@ -1,7 +1,7 @@
 ---
 name: transcription
-description: 音视频转录工具，将URL或本地文件转为文字
-allowed-tools: Bash, Read
+description: 音视频转录工具，将URL或本地文件转为文字，有价值的转录存入 Research
+allowed-tools: Bash, Read, Write
 argument-hint: "<URL or file path>"
 ---
 
@@ -27,5 +27,15 @@ whisper /tmp/transcribe_input.wav --language Chinese --model medium
 whisper "$ARGUMENTS" --language Chinese --model medium
 ```
 
+### 中间产物处理
+
+转录完成后，判断结果是否有沉淀价值：
+
+- **有价值**（完整访谈、讲座、重要讨论）：
+  - 存入 `30_Research/转录_<主题>_YYYY-MM-DD.md`
+  - 在 `10_Daily/YYYY-MM-DD.md` 追加记录
+- **临时性**（仅用于本次生产的片段）：
+  - 仅返回文字内容，不保存到仓库
+
 ### 输出
-返回转录后的完整文字内容。
+返回转录后的完整文字内容，并告知是否已存入仓库。

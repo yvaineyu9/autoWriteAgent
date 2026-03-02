@@ -1,12 +1,17 @@
 ---
 name: show-notes
-description: 根据播客稿件生成节目简介、时间戳和关键词
-allowed-tools: Read
+description: 根据播客稿件生成节目简介、时间戳和关键词，归档到仓库
+allowed-tools: Read, Write
 argument-hint: "[稿件内容或文件路径]"
 ---
 
 ## 任务
-根据播客稿件内容，生成完整的节目发布信息。
+根据播客稿件内容，生成完整的节目发布信息并归档。
+
+## 素材读取
+
+- 如果用户给了 `60_Published/podcast/` 中的文件路径 → 从归档读取稿件
+- 如果用户给了文本 → 直接使用
 
 ## 输出内容
 
@@ -31,3 +36,10 @@ argument-hint: "[稿件内容或文件路径]"
 
 ### 5. 推荐的封面文案
 一句话，适合放在封面图上。
+
+## 产出归仓
+
+1. **成品归档**：将 show notes 追加到对应稿件的 `60_Published/podcast/` 文件末尾
+   - 或创建独立文件 `60_Published/podcast/EP<编号>_<标题>_ShowNotes.md`
+2. **每日记录**：在 `10_Daily/YYYY-MM-DD.md` 追加记录
+   - 格式：`- 完成 Show Notes：EP<编号> <标题>`

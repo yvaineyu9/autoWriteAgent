@@ -1,17 +1,29 @@
 ---
 name: script-creation
-description: 乐乎玄学馆播客稿件创作工作流，自动生成并审核至达标
-allowed-tools: Read, Bash, WebFetch, Task
+description: 乐乎玄学馆播客稿件创作工作流，自动生成审核并归档到仓库
+allowed-tools: Read, Bash, WebFetch, Task, Write, Edit
 argument-hint: "[URL or text]"
 ---
 
 ## 任务
-将输入内容扩展为5000-8000字的「乐乎玄学馆」深度播客对话稿，经审核达标后输出。
+将输入内容扩展为5000-8000字的「乐乎玄学馆」深度播客对话稿，经审核达标后归档到仓库。
+
+## 素材读取
+
+在开始生产前，根据输入判断素材来源：
+- 如果用户给了仓库中的文件路径 → 从对应目录读取（`00_Inbox/`、`30_Research/`）
+- 如果用户给了外部 URL → 先调用 transcription skill 转录
+- 如果用户给了文本 → 直接使用
+- 主动搜索 `40_Wiki/` 中与主题相关的占星/心理学知识词条作为参考
+- 如果 `20_Project/` 中有相关项目 → 读取项目上下文
 
 ## 流程
 
 ### Step 1：准备素材
 - 如果 `$ARGUMENTS` 是 URL → 调用 transcription skill 转录
+  - 判断转录结果是否有沉淀价值
+  - **有价值**（完整访谈、重要内容）→ 存入 `30_Research/转录_<主题>.md`
+  - **临时性**（仅用于本次生产）→ 仅在内存中传递
 - 如果是文本 → 直接使用
 
 ### Step 2：生成初稿
@@ -31,7 +43,21 @@ argument-hint: "[URL or text]"
 - 未通过 → 将审核意见发回 writer agent 修改
 - 最多循环 3 轮
 
-### Step 5：输出格式
+### Step 5：产出归仓
+
+审核通过后，执行以下归仓操作：
+
+1. **成品归档**：将终稿写入 `60_Published/podcast/EP<编号>_<标题>.md`
+   - 文件内容为完整的播客对话稿，含审核分数
+   - 编号自动递增（检查 `60_Published/podcast/` 下最大编号）
+2. **项目状态回写**：如果 `20_Project/` 中存在对应项目文件
+   - 在该项目 Progress 段追加：`- [YYYY-MM-DD] 完成播客稿件：EP<编号> <标题>`
+   - 如果不存在对应项目，跳过此步
+3. **每日记录**：在 `10_Daily/YYYY-MM-DD.md` 追加产出记录
+   - 格式：`- 完成播客稿件：[[EP<编号>_<标题>]]，审核分数 XX/60`
+   - 如果当日文件不存在，基于 `99_System/templates/daily.md` 创建
+
+### Step 6：输出格式
 ```
 # 乐乎玄学馆 EP[XX]: [标题]
 BGM: (建议)
@@ -39,3 +65,5 @@ BGM: (建议)
 **小狗仔**: ...
 **小刀**: ...
 ```
+
+向用户报告归档路径和审核分数。

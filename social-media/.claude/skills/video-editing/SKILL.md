@@ -1,12 +1,18 @@
 ---
 name: video-editing
-description: 视频剪辑方案生成，分析素材并输出剪辑指令或脚本
-allowed-tools: Read, Bash, WebFetch
+description: 视频剪辑方案生成与执行，产出归档到仓库
+allowed-tools: Read, Bash, WebFetch, Write
 argument-hint: "[视频文件路径或描述]"
 ---
 
 ## 任务
-分析视频素材，生成剪辑方案或执行自动化剪辑操作。
+分析视频素材，生成剪辑方案或执行自动化剪辑操作，产出归档到仓库。
+
+## 素材读取
+
+- 如果用户给了 `50_Resources/` 中的文件路径 → 从仓库读取素材
+- 如果用户给了外部文件路径 → 直接使用
+- 如果用户给了描述 → 根据描述制定方案
 
 ## 能力范围
 - 分析视频内容，提取关键片段时间点
@@ -31,3 +37,12 @@ argument-hint: "[视频文件路径或描述]"
 
 ### Step 4：审核
 调用 reviewer agent 评估剪辑方案是否合理。
+
+### Step 5：产出归仓
+
+1. **剪辑方案归档**：将剪辑方案文档写入 `60_Published/social-media/YYYY-MM-DD_剪辑方案_<名称>.md`
+2. **项目状态回写**：如果存在对应项目，追加进度
+3. **每日记录**：在 `10_Daily/YYYY-MM-DD.md` 追加记录
+   - 格式：`- 完成视频剪辑：<名称>，输出 N 个片段`
+
+注意：视频文件本身（mp4等）不提交到 Git，由 .gitignore 排除。
