@@ -1,12 +1,12 @@
 ---
 name: content-creation
-description: 社媒内容全流程创作（多平台自动改写），产出归档到仓库
-allowed-tools: Read, Bash, WebFetch, Task, Write, Edit
+description: 社媒内容全流程创作（多平台自动改写），通过独立 CLI 子代理实现写作与审核分离
+allowed-tools: Read, Bash, WebFetch, Write, Edit
 argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--mode 润色]"
 ---
 
 ## 任务
-根据输入的主题、素材或URL，自动判断任务类型，以虫小宇人设生成多平台社媒内容，经审核达标后归档到仓库。
+根据输入的主题、素材或URL，自动判断任务类型，以虫小宇人设生成多平台社媒内容，经独立审核达标后归档到仓库。
 
 ## 参数解析
 
@@ -47,62 +47,127 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 - 主动搜索 `40_Wiki/` 中与主题相关的知识词条作为参考
 - 如果 `20_Project/` 中有相关项目 → 读取项目上下文了解整体方向
 
+## 核心架构：CLI 子代理编排
+
+本 skill 采用**主会话编排 + CLI 子代理执行**的架构。主会话（你）负责流程控制和归仓，内容生成和审核由独立的 `claude -p` 子进程完成。
+
+### 为什么用 CLI 子代理
+- **上下文隔离**：reviewer 完全看不到生成过程，审核更客观
+- **模型分配**：writer 用 sonnet（快+省），reviewer 用 opus（严格）
+- **多平台并行**：多个 writer 可以后台同时运行
+- **稳定可靠**：不依赖 Task API，直接走 CLI
+
+### 路径约定
+- 项目根目录：由主会话通过 `pwd` 或已知路径确定
+- 临时文件目录：`/tmp/content_creation/`
+- Writer system prompt：`social-media/.claude/agents/writer.md`（去掉 frontmatter 后使用）
+- Reviewer system prompt：`social-media/.claude/agents/reviewer.md`（去掉 frontmatter 后使用）
+- 人设文件：`social-media/.claude/prompts/persona.md`
+- 平台风格文件：`social-media/.claude/prompts/<platform>.md`
+
 ## 流程
 
-### Step 0：加载人设
-**每次生成内容前，必须先读取个人风格档案**：
-```
-social-media/.claude/prompts/persona.md
-```
-这是虫小宇的人设、语言风格、价值观和变现引导规则。所有内容生成都必须基于这个人设。
+### Step 0：准备工作
+1. 创建临时目录：`mkdir -p /tmp/content_creation`
+2. 读取人设文件 `social-media/.claude/prompts/persona.md`
+3. 确定目标平台列表
 
 ### Step 1：确定目标平台
 - 如果用户通过 `--platform` 指定了平台，按指定的来
 - 如果没有指定，默认生成小红书 + 公众号 + Twitter 三个版本
 
-### Step 2：读取风格指令
-改写前，读取对应平台的 prompt 文件：
-- 小红书：`social-media/.claude/prompts/xiaohongshu.md`
-- 公众号：`social-media/.claude/prompts/wechat.md`
-- Twitter：`social-media/.claude/prompts/twitter.md`
-- 播客逐字稿：`social-media/.claude/prompts/podcast_script.md`
+### Step 2：准备 writer prompt 输入
+对每个目标平台，读取对应的风格指令文件，将以下内容拼装写入 `/tmp/content_creation/writer_input_<platform>.md`：
+```
+## 人设档案
+<persona.md 的内容>
 
-### Step 3：生成内容
-调用 writer agent，传入素材、人设和平台风格要求。核心要求：
-- 内容必须体现虫小宇的语言风格（直接、口语化、有密度、偶尔毒舌）
-- 必须融入个人观点或经历
-- 标题必须使用爆文公式（参见各平台prompt中的标题公式库）
-- 结尾必须带品牌签名："我是致力于研究进化出超级人生的小宇，我们一起改变命运！"
+## 平台风格指令
+<对应平台 prompt 的内容>
+
+## 素材
+<用户提供的素材/主题>
+
+## 任务
+请以虫小宇的人格，按照上述平台风格指令，为<平台名>生成一篇完整的内容文案。
+直接输出成品，不要加任何说明性文字。用 markdown 格式。
+```
+
+### Step 3：调用 Writer 子代理（可并行）
+对每个平台，通过 CLI 调用独立的 writer 子进程：
+
+```bash
+cat /tmp/content_creation/writer_input_<platform>.md | \
+claude -p \
+  --allowedTools "Read,WebFetch" \
+  --add-dir "$(pwd)" \
+  2>/dev/null > /tmp/content_creation/draft_<platform>.md
+```
+
+**多平台并行优化**：如果有多个平台，可以用 `&` 让多个 writer 同时运行：
+```bash
+cat /tmp/content_creation/writer_input_xiaohongshu.md | claude -p --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_xiaohongshu.md &
+cat /tmp/content_creation/writer_input_wechat.md | claude -p --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_wechat.md &
+cat /tmp/content_creation/writer_input_twitter.md | claude -p --allowedTools "Read,WebFetch" --add-dir "$(pwd)" 2>/dev/null > /tmp/content_creation/draft_twitter.md &
+wait
+```
 
 ### Step 3.5：协作模式（当用户提供零散素材时）
 如果用户给的不是完整文章，而是零散的语音转录、笔记碎片或口述内容：
-1. **先整理核心观点**：提取出关键论点列表，展示给用户确认
-2. **生成初稿**：按平台 prompt 要求生成完整文章
-3. **等待用户修改**：用户会直接修改和补充内容
-4. **清理优化**：用户改完后，只做去重去啰嗦处理，不改变用户的表达方式和内容
-5. **结构整理**：根据用户确认的内容，整理标题层级、分点、分隔线等排版
-6. **循环迭代**：直到用户满意为止
+1. 主会话先整理核心观点，展示给用户确认
+2. 将确认后的观点作为素材传给 writer 子代理
+3. 后续流程不变
 
-### Step 4：审核
-调用 reviewer agent，按 [standards.md](standards.md) 的标准审核。
+### Step 4：调用 Reviewer 子代理
+对每篇生成的草稿，调用独立的 reviewer 子进程进行审核：
+
+```bash
+cat /tmp/content_creation/draft_<platform>.md | \
+claude -p \
+  --tools "" \
+  --append-system-prompt "你是一个严格独立的内容审核员。按照以下标准逐项打分，输出纯 JSON（不要代码块标记），直接以{开头}结尾。评分维度（每项1-10分，总分60分，≥48分通过）：1.吸引力 2.信息价值 3.情绪共鸣 4.平台适配 5.行动引导 6.原创性。严格使用以下字段名：{\"total\":数字,\"pass\":true/false,\"scores\":{\"吸引力\":数字,\"信息价值\":数字,\"情绪共鸣\":数字,\"平台适配\":数字,\"行动引导\":数字,\"原创性\":数字},\"feedback\":\"修改建议或null\",\"highlights\":\"亮点\"}。不要增加任何额外字段。" \
+  "请审核以上<平台名>平台的社媒内容" \
+  2>/dev/null > /tmp/content_creation/review_<platform>.json
+```
+
+**注意**：
+- reviewer 使用 `--tools ""` 禁用所有工具，只做纯文本审核，确保完全独立
+- 如果输出被 ` ```json ``` ` 代码块包裹，解析时先 strip 掉代码块标记再提取 JSON
 
 ### Step 5：循环改进
-- 审核通过（≥48/60）→ 输出终稿
-- 未通过 → 将审核意见发回 writer agent 修改
-- 最多循环 3 轮
+主会话读取 reviewer 的 JSON 输出，判断是否通过：
+
+```
+读取 review_<platform>.json
+  → total ≥ 48 → 通过 → 进入归仓
+  → total < 48 → 将 feedback 追加到 writer_input，重新调用 writer
+  → 最多循环 3 轮
+  → 3 轮后仍未通过 → 输出最后一版 + 审核结果，由用户决定
+```
+
+重新调用 writer 时，在输入文件末尾追加：
+```
+## 修改要求（第N轮）
+上一轮审核未通过（XX/60分），请按以下意见修改：
+<reviewer 的 feedback>
+
+严格按修改意见调整，直接输出修改后的完整文案。
+```
 
 ### Step 6：产出归仓
 
 审核通过后，执行以下归仓操作：
 
 1. **成品归档**：将每个平台的终稿分别写入 `60_Published/social-media/YYYY-MM-DD_<标题>_<平台>.md`
-   - 文件内容包含：正文文案、hashtag、发布建议、审核分数
+   - 文件头部包含元信息：平台、审核分数、生成日期
+   - 文件内容：正文文案、hashtag
 2. **项目状态回写**：如果 `20_Project/` 中存在对应项目文件
    - 在该项目 Progress 段追加：`- [YYYY-MM-DD] 完成社媒文案：<标题>（<平台列表>）`
    - 如果不存在对应项目，跳过此步
 3. **每日记录**：在 `10_Daily/YYYY-MM-DD.md` 追加产出记录
    - 格式：`- 完成社媒文案：<标题>，平台：<平台列表>，审核分数 XX/60`
    - 如果当日文件不存在，基于 `99_System/templates/daily.md` 创建
+4. **清理临时文件**：`rm -rf /tmp/content_creation/`
 
 ### Step 7：输出展示
 
@@ -123,8 +188,9 @@ social-media/.claude/prompts/persona.md
 
 向用户报告：
 - 终稿内容预览
+- 各平台审核分数 + 亮点
 - 归档路径
-- 审核分数
+- 循环轮次（如有）
 
 ## 注意事项
 
@@ -132,4 +198,5 @@ social-media/.claude/prompts/persona.md
 - 不要自己编造事实，忠实于原始输入内容
 - 扩写时可以补充合理的论据和案例，但核心观点必须来自用户输入
 - **扩写和改写时，必须以虫小宇的人设和语言风格输出**，不能写成通用的AI生成内容
-- 每次生成前务必先读取 persona.md，不要凭记忆生成
+- CLI 子代理调用失败时（如 claude 命令不可用），回退到主会话内直接生成
+- 如果 `--output-format json` 的输出不是合法 JSON，尝试从文本中提取分数信息
