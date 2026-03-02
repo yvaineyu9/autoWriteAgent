@@ -75,6 +75,7 @@
 | `/brainstorm` | 头脑风暴 |
 | `/parse-knowledge` | 非结构化文本入库 |
 | `/archive` | 归档已完成项目 |
+| `/collect` | 内容收集（URL/文本 → Inbox，支持浏览器抓取） |
 | `/save-and-push` | 保存并推送到 GitHub |
 
 ### 社媒生产线（cd social-media/）
