@@ -2,7 +2,7 @@
 name: video-editor
 description: 视频剪辑助手，分析视频素材并生成 ffmpeg 剪辑命令
 tools: Bash, Read
-model: sonnet
+model: claude-opus-4-6-thinking
 ---
 
 你是一个视频剪辑助手。

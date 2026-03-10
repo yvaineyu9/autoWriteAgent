@@ -10,21 +10,40 @@ argument-hint: "<URL or file path>"
 
 ## 流程
 
-### 如果输入是 URL
-1. 用 yt-dlp 下载音频
+### 如果输入是小宇宙链接
+直接使用项目自带的转录脚本（内置下载+缓存+faster_whisper 转录）：
+```bash
+python3 scripts/podcast_transcribe.py "$ARGUMENTS" -m medium
+```
+脚本会：
+1. 自动从小宇宙页面提取音频链接
+2. 下载音频（带缓存，不重复下载）
+3. 用 faster_whisper 转录（带缓存，不重复转录）
+4. 输出 `META:{json}` 头 + `---` 分隔 + 转录文本
+
+### 如果输入是其他 URL
+用 yt-dlp 下载后手动转录：
 ```bash
 yt-dlp -x --audio-format wav -o "/tmp/transcribe_input.wav" "$ARGUMENTS"
-```
-
-2. 用 whisper 转录
-```bash
-whisper /tmp/transcribe_input.wav --language Chinese --model medium
+python3 -c "
+from faster_whisper import WhisperModel
+model = WhisperModel('medium', device='cpu', compute_type='int8')
+segments, info = model.transcribe('/tmp/transcribe_input.wav', language='zh', beam_size=5, vad_filter=True)
+for seg in segments:
+    print(seg.text.strip())
+"
 ```
 
 ### 如果输入是本地文件路径
-直接用 whisper 转录：
+直接用 faster_whisper 转录：
 ```bash
-whisper "$ARGUMENTS" --language Chinese --model medium
+python3 -c "
+from faster_whisper import WhisperModel
+model = WhisperModel('medium', device='cpu', compute_type='int8')
+segments, info = model.transcribe('$ARGUMENTS', language='zh', beam_size=5, vad_filter=True)
+for seg in segments:
+    print(seg.text.strip())
+"
 ```
 
 ### 中间产物处理
