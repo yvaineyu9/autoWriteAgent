@@ -50,7 +50,7 @@ argument-hint: "[URL/文本/文件路径]"
 
 ### 为什么用 CLI 子代理
 - **上下文隔离**：reviewer 完全看不到生成过程，审核更客观
-- **模型分配**：所有子代理统一使用 `claude-opus-4-6-thinking`
+- **模型分配**：所有子代理使用 `claude -p` 默认模型
 - **稳定可靠**：不依赖 Task API，直接走 CLI
 
 ### 路径约定
@@ -99,7 +99,7 @@ argument-hint: "[URL/文本/文件路径]"
 ```bash
 cat /tmp/script_creation/writer_input.md | \
 claude -p \
-  --model claude-opus-4-6-thinking \
+  \
   --allowedTools "Read,WebFetch" \
   --add-dir "$(pwd)" \
   2>/dev/null > /tmp/script_creation/draft.md
@@ -111,7 +111,7 @@ claude -p \
 ```bash
 cat /tmp/script_creation/draft.md | \
 claude -p \
-  --model claude-opus-4-6-thinking \
+  \
   --tools "" \
   --append-system-prompt "你是一个严格独立的播客稿件审核员。按照以下标准逐项打分，输出纯 JSON（不要代码块标记），直接以{开头}结尾。评分维度（每项1-10分，总分60分，≥48分通过）：1.信息密度 2.情绪节奏 3.对话自然度 4.Hook吸引力 5.行动价值 6.字数合规。严格使用以下字段名：{\"total\":数字,\"pass\":true/false,\"scores\":{\"信息密度\":数字,\"情绪节奏\":数字,\"对话自然度\":数字,\"Hook吸引力\":数字,\"行动价值\":数字,\"字数合规\":数字},\"feedback\":\"修改建议或null\",\"highlights\":\"亮点\"}。不要增加任何额外字段。" \
   "请审核以上播客对话稿" \
