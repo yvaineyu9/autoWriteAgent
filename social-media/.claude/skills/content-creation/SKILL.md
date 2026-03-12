@@ -2,11 +2,11 @@
 name: content-creation
 description: 社媒内容全流程创作（多平台自动改写），通过独立 CLI 子代理实现写作与审核分离
 allowed-tools: Read, Bash, WebFetch, Write, Edit
-argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--mode 润色]"
+argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--account 人设名] [--mode 润色]"
 ---
 
 ## 任务
-根据输入的主题、素材或URL，自动判断任务类型，以虫小宇人设生成多平台社媒内容，经独立审核达标后归档到仓库。
+根据输入的主题、素材或URL，自动判断任务类型，以指定人设（默认虫小宇）生成多平台社媒内容，经独立审核达标后归档到仓库。
 
 ## 参数解析
 
@@ -19,6 +19,15 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 - 如果未指定 `--platform`，默认生成三个图文平台（小红书 + 公众号 + Twitter），不含播客逐字稿
 - 播客逐字稿必须通过 `--platform 播客` 显式指定
 - 解析后将 `--platform xxx` 从输入文本中移除，剩余部分作为实际内容输入
+
+### 人设选择 `--account`
+- 格式：`--account chongxiaoyu`、`--account yuejian`
+- 支持的人设名对应 `social-media/.claude/personas/` 下的子目录名
+- 如果未指定 `--account`，默认使用 `chongxiaoyu`
+- 解析后将 `--account xxx` 从输入文本中移除
+- 当前可用人设：
+  - `chongxiaoyu`：虫小宇（占星 × AI，个人成长方向）
+  - `yuejian`：月见（关系占星 × 星宿学，恋爱关系方向）
 
 ### 批量处理
 - 如果用户输入包含多个小宇宙链接（用空格或换行分隔），依次处理每个链接
@@ -62,15 +71,16 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 - 临时文件目录：`/tmp/content_creation/`
 - Writer system prompt：`social-media/.claude/agents/writer.md`（去掉 frontmatter 后使用）
 - Reviewer system prompt：`social-media/.claude/agents/reviewer.md`（去掉 frontmatter 后使用）
-- 人设文件：`social-media/.claude/prompts/persona.md`
-- 平台风格文件：`social-media/.claude/prompts/<platform>.md`
+- 人设文件：`social-media/.claude/personas/<account>/persona.md`
+- 平台风格文件：`social-media/.claude/personas/<account>/<platform>.md`
 
 ## 流程
 
 ### Step 0：准备工作
 1. 创建临时目录：`mkdir -p /tmp/content_creation`
-2. 读取人设文件 `social-media/.claude/prompts/persona.md`
-3. 确定目标平台列表
+2. 解析 `--account` 参数，确定人设名（默认 `chongxiaoyu`）
+3. 读取人设文件 `social-media/.claude/personas/<account>/persona.md`
+4. 确定目标平台列表
 
 ### Step 1：确定目标平台
 - 如果用户通过 `--platform` 指定了平台，按指定的来
@@ -89,7 +99,7 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 <用户提供的素材/主题>
 
 ## 任务
-请以虫小宇的人格，按照上述平台风格指令，为<平台名>生成一篇完整的内容文案。
+请以人设档案中定义的人格，按照上述平台风格指令，为<平台名>生成一篇完整的内容文案。
 直接输出成品，不要加任何说明性文字。用 markdown 格式。
 ```
 
@@ -160,7 +170,7 @@ claude -p \
 
 审核通过后，执行以下归仓操作：
 
-1. **成品归档**：将每个平台的终稿分别写入 `60_Published/social-media/YYYY-MM-DD_<标题>_<平台>.md`
+1. **成品归档**：将每个平台的终稿分别写入 `60_Published/social-media/<account>/YYYY-MM-DD_<标题>_<平台>.md`
    - 文件头部包含元信息：平台、审核分数、生成日期
    - 文件内容：正文文案、hashtag
 2. **项目状态回写**：如果 `20_Project/` 中存在对应项目文件
@@ -199,6 +209,6 @@ claude -p \
 - 所有内容用中文输出（Twitter 可以中英混合）
 - 不要自己编造事实，忠实于原始输入内容
 - 扩写时可以补充合理的论据和案例，但核心观点必须来自用户输入
-- **扩写和改写时，必须以虫小宇的人设和语言风格输出**，不能写成通用的AI生成内容
+- **扩写和改写时，必须以当前 `--account` 指定人设的语言风格输出**，不能写成通用的AI生成内容
 - CLI 子代理调用失败时（如 claude 命令不可用），回退到主会话内直接生成
 - 如果 `--output-format json` 的输出不是合法 JSON，尝试从文本中提取分数信息
