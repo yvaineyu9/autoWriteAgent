@@ -13,9 +13,10 @@ function parseArgs() {
     output: './output',
     cover: null,
     authorName: '月见-关系小精灵',
-    authorBio: '星宿关系、合盘、马盘',
+    authorBio: '关系真相、星宿、合盘',
     authorAvatar: null,
-    category: '月见APP       缘分、关系、恋爱神器',
+    categoryLeft: '月见 APP',
+    categorySlogan: '关系分析、成长助手',
     title: null,
   };
 
@@ -27,7 +28,8 @@ function parseArgs() {
       case '--author-name': opts.authorName = args[++i]; break;
       case '--author-bio': opts.authorBio = args[++i]; break;
       case '--author-avatar': opts.authorAvatar = args[++i]; break;
-      case '--category': opts.category = args[++i]; break;
+      case '--category-left': opts.categoryLeft = args[++i]; break;
+      case '--category-slogan': opts.categorySlogan = args[++i]; break;
       case '--title': opts.title = args[++i]; break;
       case '-h': case '--help':
         console.log(`
@@ -38,9 +40,10 @@ function parseArgs() {
   -o, --output <dir>        输出目录（默认 ./output）
   --cover <file>            封面图路径
   --author-name <name>      作者名（默认 "月见-关系小精灵"）
-  --author-bio <bio>        作者简介（默认 "星宿关系、合盘、马盘"）
+  --author-bio <bio>        作者简介（默认 "关系真相、星宿、合盘"）
   --author-avatar <file>    头像路径
-  --category <text>         页头标签
+  --category-left <text>    页头左侧标签（默认 "月见 APP"）
+  --category-slogan <text>  页头右侧标签（默认 "关系分析、成长助手"）
   --title <text>            覆盖 Markdown 中的 # 标题
 
 示例:
@@ -66,10 +69,10 @@ const TEXTURE_BG = path.join(ASSETS, 'texture-bg.png');
 GlobalFonts.registerFromPath(path.join(FONTS, 'SourceHanSerifCN-Regular.otf'), 'Source Han Serif CN');
 GlobalFonts.registerFromPath(path.join(FONTS, 'SourceHanSerifCN-Bold.otf'), 'Source Han Serif CN');
 
-// ─── 样式常量 ───
-const BODY_FONT = '40px "Source Han Serif CN"';
-const BODY_FONT_BOLD = 'bold 40px "Source Han Serif CN"';
-const H2_FONT = 'bold 48px "Source Han Serif CN"';
+// ─── 样式常量（与 HTML 版完全一致）───
+const BODY_FONT = '40px "Source Han Serif CN", serif';
+const BODY_FONT_BOLD = 'bold 40px "Source Han Serif CN", serif';
+const H2_FONT = 'bold 48px "Source Han Serif CN", serif';
 const TEXT_COLOR = '#291100';
 const H2_COLOR = '#833B00';
 const LINE_HEIGHT = 72;
@@ -77,11 +80,10 @@ const BLOCK_GAP = 80;
 const MAX_WIDTH = 952;
 const MARGIN_LEFT = 64;
 const FOOTER_Y = 1700;
-const LETTER_SPACING = 3; // px
+const LETTER_SPACING = '3px';
 
 // ─── Markdown 解析 ───
 function stripFrontmatter(text) {
-  // Strip YAML frontmatter (--- ... ---)
   const match = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
   if (match) return text.slice(match[0].length);
   return text;
@@ -94,7 +96,7 @@ function parseContent(text) {
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // Skip XHS hashtag lines (e.g. "#分手 #恋爱心理学 #情感")
+    // Skip XHS hashtag lines
     if (/^#\S+(\s+#\S+)*\s*$/.test(trimmed)) continue;
     // Skip signature lines
     if (/^我是月见/.test(trimmed)) continue;
@@ -125,36 +127,30 @@ function cleanSeparators(blocks) {
   return cleaned;
 }
 
-// ─── Canvas 文本工具 ───
-// @napi-rs/canvas 不支持 ctx.letterSpacing，手动处理
-function measureCharWidth(ctx, char) {
-  return ctx.measureText(char).width + LETTER_SPACING;
-}
+// ─── Canvas 文本工具（与 HTML 版一致，使用 ctx.letterSpacing）───
 
-// 测量整个字符串宽度（含 letter-spacing）
-function measureTextWidth(ctx, text) {
-  let w = 0;
-  for (const char of text) w += measureCharWidth(ctx, char);
-  return w;
-}
-
+// 自动换行（整行渲染，不逐字）
 function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   const chars = text.split('');
-  let currentX = x;
+  let line = '';
   let currentY = y;
 
   for (let i = 0; i < chars.length; i++) {
-    const w = measureCharWidth(ctx, chars[i]);
-    if (currentX + w > x + maxWidth && currentX > x) {
+    const testLine = line + chars[i];
+    const testWidth = ctx.measureText(testLine).width;
+    if (testWidth > maxWidth && i > 0) {
+      ctx.fillText(line, x, currentY);
+      line = chars[i];
       currentY += lineHeight;
-      currentX = x;
+    } else {
+      line = testLine;
     }
-    ctx.fillText(chars[i], currentX, currentY);
-    currentX += w;
   }
+  ctx.fillText(line, x, currentY);
   return currentY;
 }
 
+// 带行内强调的自动换行渲染（与 HTML 版一致的三遍法）
 function wrapTextRich(ctx, text, x, y, maxWidth, lineHeight) {
   const parts = text.split(/(\*\*[^*]+\*\*)/);
   const segments = [];
@@ -166,7 +162,7 @@ function wrapTextRich(ctx, text, x, y, maxWidth, lineHeight) {
     }
   }
 
-  // 第一遍：测量，收集字符坐标和加粗区间
+  // 第一遍：测量位置
   let currentX = x, currentY = y;
   const charPositions = [];
   const boldRanges = [];
@@ -174,8 +170,9 @@ function wrapTextRich(ctx, text, x, y, maxWidth, lineHeight) {
 
   for (const seg of segments) {
     let segStartX = seg.bold ? currentX : -1;
+
     for (const char of seg.text) {
-      const w = measureCharWidth(ctx, char);
+      const w = ctx.measureText(char).width;
       if (currentX + w > x + maxWidth && currentX > x) {
         if (seg.bold && segStartX >= 0) {
           boldRanges.push({ startX: segStartX, endX: currentX, y: currentY });
@@ -184,9 +181,10 @@ function wrapTextRich(ctx, text, x, y, maxWidth, lineHeight) {
         currentX = x;
         if (seg.bold) segStartX = x;
       }
-      charPositions.push({ char, x: currentX, y: currentY });
+      charPositions.push({ char, x: currentX, y: currentY, bold: seg.bold });
       currentX += w;
     }
+
     if (seg.bold && segStartX >= 0) {
       boldRanges.push({ startX: segStartX, endX: currentX, y: currentY });
     }
@@ -215,10 +213,11 @@ function wrapTextRich(ctx, text, x, y, maxWidth, lineHeight) {
   return currentY;
 }
 
-// ─── 渲染逻辑 ───
+// ─── 渲染逻辑（与 HTML 版一致）───
 function renderBlocksUntilFull(ctx, blocks, startY, maxY) {
   let y = startY;
   ctx.textBaseline = 'alphabetic';
+  ctx.letterSpacing = LETTER_SPACING;
   let consumed = 0;
 
   for (let i = 0; i < blocks.length; i++) {
@@ -245,16 +244,25 @@ function renderBlocksUntilFull(ctx, blocks, startY, maxY) {
           const txt = isBold ? part.slice(2, -2) : part;
           ctx.font = isBold ? BODY_FONT : BODY_FONT;
           for (const char of txt) {
-            const w = measureCharWidth(ctx, char);
-            if (lineW + w > MAX_WIDTH && lineW > 0) { predictLines++; lineW = 0; }
+            const w = ctx.measureText(char).width;
+            if (lineW + w > MAX_WIDTH && lineW > 0) {
+              predictLines++;
+              lineW = 0;
+            }
             lineW += w;
           }
         }
       } else {
-        for (const char of block.content) {
-          const w = measureCharWidth(ctx, char);
-          if (lineW + w > MAX_WIDTH && lineW > 0) { predictLines++; lineW = 0; }
-          lineW += w;
+        const chars = block.content.split('');
+        let line = '';
+        for (const char of chars) {
+          const testLine = line + char;
+          if (ctx.measureText(testLine).width > MAX_WIDTH && line.length > 0) {
+            predictLines++;
+            line = char;
+          } else {
+            line = testLine;
+          }
         }
       }
       predictedEndY = y + (predictLines - 1) * LINE_HEIGHT;
@@ -280,7 +288,7 @@ function renderBlocksUntilFull(ctx, blocks, startY, maxY) {
 
       case 'highlight':
         ctx.font = BODY_FONT;
-        const hlW = Math.min(measureTextWidth(ctx, block.content), MAX_WIDTH);
+        const hlW = Math.min(ctx.measureText(block.content).width, MAX_WIDTH);
         const hlP = 10;
         ctx.fillStyle = 'rgba(245, 222, 170, 0.45)';
         ctx.fillRect(MARGIN_LEFT - hlP, y - 36, hlW + hlP * 2, 50);
@@ -316,8 +324,9 @@ function renderBlocksUntilFull(ctx, blocks, startY, maxY) {
   return consumed;
 }
 
-// ─── 页脚 ───
+// ─── 页脚（与 HTML 版一致，使用 sans-serif）───
 function drawFooter(ctx, title, pageIndex, totalPages) {
+  ctx.letterSpacing = '0px';
   ctx.strokeStyle = 'rgba(41, 17, 0, 0.1)';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -327,15 +336,15 @@ function drawFooter(ctx, title, pageIndex, totalPages) {
 
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = 'rgba(41, 17, 0, 0.3)';
-  ctx.font = '32px "Source Han Serif CN"';
+  ctx.font = '32px "Source Han Serif CN", serif';
   const shortTitle = title.length > 20 ? title.substring(0, 20) + '...' : title;
   ctx.fillText(shortTitle, MARGIN_LEFT, FOOTER_Y + 52);
 
-  ctx.font = '24px "Source Han Serif CN"';
+  ctx.font = '24px "Source Han Serif CN", serif';
   ctx.fillText(`${pageIndex + 1}/${totalPages}`, MAX_WIDTH, FOOTER_Y + 56);
 }
 
-// ─── 页面绘制 ───
+// ─── 封面页（与 HTML 版一致）───
 async function drawCoverPage(mainTitle, blocks, coverPath, avatarPath, authorInfo, textureImg) {
   const canvas = createCanvas(1080, 1802);
   const ctx = canvas.getContext('2d');
@@ -348,7 +357,6 @@ async function drawCoverPage(mainTitle, blocks, coverPath, avatarPath, authorInf
     const coverImg = await loadImage(coverPath);
     ctx.drawImage(coverImg, 0, 0, 1080, 580);
   } catch (e) {
-    // 封面加载失败时填充渐变
     console.warn('封面图加载失败，使用默认渐变:', e.message);
     const grad = ctx.createLinearGradient(0, 0, 1080, 580);
     grad.addColorStop(0, '#2a1b3d');
@@ -377,8 +385,9 @@ async function drawCoverPage(mainTitle, blocks, coverPath, avatarPath, authorInf
 
   // 标题
   ctx.fillStyle = '#833B00';
-  ctx.font = 'bold 82px "Source Han Serif CN"';
+  ctx.font = 'bold 82px "Source Han Serif CN", serif';
   ctx.textBaseline = 'top';
+  ctx.letterSpacing = LETTER_SPACING;
   const titleEndY = wrapText(ctx, mainTitle, MARGIN_LEFT, 600, MAX_WIDTH, 120);
 
   // 头像
@@ -392,7 +401,6 @@ async function drawCoverPage(mainTitle, blocks, coverPath, avatarPath, authorInf
     ctx.drawImage(avatarImg, MARGIN_LEFT, authorY, 148, 148);
     ctx.restore();
   } catch (e) {
-    // 头像加载失败，画占位圆
     console.warn('头像加载失败，使用占位圆:', e.message);
     ctx.fillStyle = '#ddd';
     ctx.beginPath();
@@ -403,12 +411,13 @@ async function drawCoverPage(mainTitle, blocks, coverPath, avatarPath, authorInf
   // 作者名
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#291100';
-  ctx.font = 'bold 40px "Source Han Serif CN"';
+  ctx.font = 'bold 40px "Source Han Serif CN", serif';
   ctx.fillText(authorInfo.name, MARGIN_LEFT + 148 + 24, authorY + 70);
 
-  // 作者简介
+  // 作者简介（sans-serif，与 HTML 一致）
   ctx.fillStyle = 'rgba(41, 17, 0, 0.5)';
-  ctx.font = '32px "Source Han Serif CN"';
+  ctx.font = '32px "Source Han Serif CN", serif';
+  ctx.letterSpacing = '0px';
   ctx.fillText(authorInfo.bio, MARGIN_LEFT + 148 + 24, authorY + 120);
 
   // 正文
@@ -418,7 +427,8 @@ async function drawCoverPage(mainTitle, blocks, coverPath, avatarPath, authorInf
   return { canvas, consumed };
 }
 
-async function drawContentPage(mainTitle, blocks, categoryTag, textureImg) {
+// ─── 内容页（与 HTML 版一致，分左右标签）───
+async function drawContentPage(mainTitle, blocks, opts, textureImg) {
   const canvas = createCanvas(1080, 1802);
   const ctx = canvas.getContext('2d');
 
@@ -433,13 +443,19 @@ async function drawContentPage(mainTitle, blocks, categoryTag, textureImg) {
     ctx.restore();
   }
 
-  // 分类标签
+  // 分类标签（左右分开，与 HTML 一致）
   let y = 82;
   ctx.fillStyle = 'rgba(41, 17, 0, 0.3)';
-  ctx.font = '32px "Source Han Serif CN"';
-  ctx.fillText(categoryTag, MARGIN_LEFT, y);
-  const dividerY = y + 8 + 12;
+  ctx.font = '32px "Source Han Serif CN", serif';
+  ctx.letterSpacing = '0px';
+  ctx.textAlign = 'left';
+  ctx.fillText(opts.categoryLeft, MARGIN_LEFT, y);
+  // slogan 右对齐
+  ctx.textAlign = 'right';
+  ctx.fillText(opts.categorySlogan, 1016, y);
+  ctx.textAlign = 'left';
 
+  const dividerY = y + 8 + 12;
   ctx.strokeStyle = 'rgba(41, 17, 0, 0.2)';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -463,7 +479,7 @@ async function main() {
   if (opts.input) {
     markdown = fs.readFileSync(opts.input, 'utf-8');
   } else if (!process.stdin.isTTY) {
-    markdown = fs.readFileSync(0, 'utf-8'); // stdin
+    markdown = fs.readFileSync(0, 'utf-8');
   } else {
     console.error('错误: 请指定 -i <文件> 或通过 stdin 输入');
     process.exit(1);
@@ -500,7 +516,7 @@ async function main() {
 
   // 2. 内容页
   while (blocks.length > 0) {
-    const page = await drawContentPage(mainTitle, blocks, opts.category, textureImg);
+    const page = await drawContentPage(mainTitle, blocks, opts, textureImg);
     canvases.push(page.canvas);
     blocks = blocks.slice(page.consumed);
   }
