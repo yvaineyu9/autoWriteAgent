@@ -14,6 +14,7 @@
 | `40_Wiki/` | 原子级知识词条 |
 | `50_Resources/` | 参考资料、下载素材 |
 | `60_Published/` | 成品归档（按平台分子目录） |
+| `70_Distribution/` | 分发数据中心（SQLite 数据库，存储发布记录和平台数据） |
 | `90_Plans/` | 临时计划文件（research/kickoff 生成，用户确认后执行） |
 | `99_System/` | 模板、配置、归档 |
 
@@ -28,7 +29,7 @@
 ## 核心规则
 
 ### 1. 生产与存储分离
-- 工厂层目录（social-media/, podcast/, writing/, data-analysis/）**只放 .claude/ 配置文件**
+- 工厂层目录（social-media/, podcast/, writing/, data-analysis/）**只放 .claude/ 配置文件和 tools/ 无状态工具**
 - 所有产出文件、数据文件**只能存放在仓库层目录**（00-99）
 - 生产线是无状态的，不保存任何产出
 
@@ -85,7 +86,7 @@
 | `/content-creation` | 文案创作（写+审循环） |
 | `/video-editing` | 视频剪辑 |
 | `/ig-processor` | IG 视频下载处理 |
-| `/publishing` | 发布排期管理 |
+| `/publishing` | 多账号发布管理、数据采集（基于 distribution 工具） |
 
 ### 播客生产线（cd podcast/）
 | 命令 | 用途 |
