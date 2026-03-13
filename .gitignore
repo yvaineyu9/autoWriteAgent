@@ -63,3 +63,4 @@ Untitled*.base
 social-media/tools/xhs-cli/node_modules/
 social-media/tools/xhs-cli/fonts/
 social-media/tools/xhs-cli/assets/
+.secrets/
