@@ -80,6 +80,89 @@ VAULT_PATH=~/Desktop/vault
 
 ---
 
+## 小红书采集与发布
+
+**唯一允许的工具：`social-media/tools/MediaCrawler/`**（基于 [NanmiCoder/MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)）
+
+### 为什么只用 MediaCrawler
+
+- 通过 CDP 协议复用用户已登录的 Chrome，**不启动新浏览器、不启动无头浏览器**
+- 通过浏览器 JS 环境获取签名参数，**不逆向 API、不直接构造请求**
+- 内置频率控制、登录态缓存、反检测机制
+- 支持关键词搜索（search）、指定笔记（detail）、创作者主页（creator）三种模式
+
+### 启动前置条件
+
+确保 Chrome 已带调试端口启动（MediaCrawler 配置中 `ENABLE_CDP_MODE = True`，`CDP_DEBUG_PORT = 9222`）：
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/chrome-xhs-debug"
+```
+
+- Profile 目录 `~/chrome-xhs-debug` 保留小红书登录态
+- 首次使用需手动登录，后续启动自动保持
+- 验证端口：`curl -s http://127.0.0.1:9222/json/version`
+
+### 使用方式
+
+```bash
+cd social-media/tools/MediaCrawler
+
+# 关键词搜索（修改 config/base_config.py 中的 KEYWORDS 和 CRAWLER_TYPE="search"）
+python3 main.py
+
+# 指定笔记采集（修改 config/xhs_config.py 中的 XHS_SPECIFIED_NOTE_URL_LIST，CRAWLER_TYPE="detail"）
+python3 main.py
+
+# 创作者主页（修改 config/xhs_config.py 中的 XHS_CREATOR_ID_LIST，CRAWLER_TYPE="creator"）
+python3 main.py
+```
+
+采集结果默认保存为 JSONL 格式，需转换后存入 `$VAULT_PATH/00_Inbox/`。
+
+### 严格禁止
+
+- ❌ **禁止**自己编写 Playwright 脚本直接操作小红书页面
+- ❌ **禁止**使用 Playwright MCP 工具导航小红书页面
+- ❌ **禁止**直接调用小红书 API（curl/httpx/requests）
+- ❌ **禁止**启动无头浏览器访问小红书
+- ❌ **禁止**短时间内反复页面跳转（触发限流会导致封号）
+
+所有小红书相关的采集、发布操作，**必须且只能**通过 MediaCrawler 进行。
+
+---
+
+## 浏览器环境（非小红书场景）
+
+其他 skill（`/collect` 非小红书 URL、`/publishing` 等）可使用 Playwright MCP 连接已登录的 Chrome。
+
+### Playwright MCP 配置
+
+配置文件：`~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/playwright/.mcp.json`
+
+```json
+{
+  "playwright": {
+    "command": "npx",
+    "args": [
+      "@playwright/mcp@latest",
+      "--cdp-endpoint", "http://127.0.0.1:9222"
+    ]
+  }
+}
+```
+
+> **注意**：不要同时传 `--user-data-dir`，否则 MCP 会忽略 CDP 连接，转而启动新的无头浏览器。
+
+### 使用规则
+
+- **绝不启动新浏览器实例**，只连接用户已打开的 Chrome
+- 遇到验证码立即停止，通知用户手动处理
+
+---
+
 ## 可用命令
 
 ### 仓库管理（全局）
