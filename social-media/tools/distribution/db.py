@@ -9,7 +9,10 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 
-DB_PATH = Path.home() / "claude-workflows" / "70_Distribution" / "distribution.db"
+import os
+
+VAULT_PATH = Path(os.getenv("VAULT_PATH", "~/Desktop/vault")).expanduser()
+DB_PATH = VAULT_PATH / "70_Distribution" / "distribution.db"
 
 
 def get_conn() -> sqlite3.Connection:

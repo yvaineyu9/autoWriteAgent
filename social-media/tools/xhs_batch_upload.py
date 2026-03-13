@@ -17,8 +17,8 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 
-BASE_DIR = Path.home() / "claude-workflows"
-SECRETS_DIR = BASE_DIR / ".secrets"
+VAULT_PATH = Path(os.getenv("VAULT_PATH", "~/Desktop/vault")).expanduser()
+SECRETS_DIR = VAULT_PATH / ".secrets"
 COOKIES_FILE = SECRETS_DIR / "xiaohongshu_cookies.json"
 PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish"
 
@@ -191,7 +191,7 @@ async def upload_one(page, parsed, images, index, total):
 
     if not uploaded:
         print(f"  {label} ❌ 图片上传失败")
-        ss = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_upload_{index}.png")
+        ss = str(VAULT_PATH / "60_Published" / "social-media" / "output" / f"debug_upload_{index}.png")
         await page.screenshot(path=ss, full_page=True)
         print(f"  {label} 📸 截图: {ss}")
         return False
@@ -349,7 +349,7 @@ async def upload_one(page, parsed, images, index, total):
     await human_delay(1000, 1500)
 
     # 截图看 toggle 后的 UI
-    ss_schedule = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_schedule_ui_{index}.png")
+    ss_schedule = str(VAULT_PATH / "60_Published" / "social-media" / "output" / f"debug_schedule_ui_{index}.png")
     await page.screenshot(path=ss_schedule)
     print(f"  {label}   📸 定时发布UI截图: {ss_schedule}")
 
@@ -414,7 +414,7 @@ async def upload_one(page, parsed, images, index, total):
     # 如果没找到标准 input，尝试找 d-text 类型的 input（小红书可能用自定义组件）
     if not date_filled or not time_filled:
         # 截图看当前状态
-        ss_debug = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_datetime_{index}.png")
+        ss_debug = str(VAULT_PATH / "60_Published" / "social-media" / "output" / f"debug_datetime_{index}.png")
         await page.screenshot(path=ss_debug)
         print(f"  {label}   📸 日期时间调试截图: {ss_debug}")
         print(f"  {label}   ⚠️ 日期填入:{date_filled} 时间填入:{time_filled}")
@@ -439,7 +439,7 @@ async def upload_one(page, parsed, images, index, total):
         print(f"  {label}   发布按钮异常: {e}")
 
     # 截图确认结果
-    ss_after = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_after_save_{index}.png")
+    ss_after = str(VAULT_PATH / "60_Published" / "social-media" / "output" / f"debug_after_save_{index}.png")
     await page.screenshot(path=ss_after)
     print(f"  {label}   📸 发布后截图: {ss_after}")
 
@@ -448,7 +448,7 @@ async def upload_one(page, parsed, images, index, total):
     else:
         print(f"  {label} ❌ 保存失败！")
         # 截图
-        ss = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_{index}.png")
+        ss = str(VAULT_PATH / "60_Published" / "social-media" / "output" / f"debug_{index}.png")
         await page.screenshot(path=ss, full_page=True)
         print(f"  {label} 📸 截图: {ss}")
         return False

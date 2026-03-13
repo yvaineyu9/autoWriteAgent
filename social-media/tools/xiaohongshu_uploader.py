@@ -30,9 +30,9 @@ import random
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
-# 配置路径
-BASE_DIR = Path.home() / "claude-workflows"
-SECRETS_DIR = BASE_DIR / ".secrets"
+# 配置路径（数据仓库独立于代码仓库）
+VAULT_PATH = Path(os.getenv("VAULT_PATH", "~/Desktop/vault")).expanduser()
+SECRETS_DIR = VAULT_PATH / ".secrets"
 COOKIES_FILE = SECRETS_DIR / "xiaohongshu_cookies.json"
 
 # 小红书创作者中心发布页
@@ -567,7 +567,7 @@ async def upload_to_backend(parsed: Dict, images: List[Path]):
         if not draft_saved:
             print("   ❌ 未能自动保存草稿，截图诊断中...")
             # 截图保存供诊断
-            screenshot_path = str(BASE_DIR / "60_Published" / "social-media" / "output" / "debug_screenshot.png")
+            screenshot_path = str(VAULT_PATH / "60_Published" / "social-media" / "output" / "debug_screenshot.png")
             await page.screenshot(path=screenshot_path, full_page=True)
             print(f"   📸 截图已保存: {screenshot_path}")
             # 打印页面上所有按钮文本
@@ -647,8 +647,8 @@ def main():
         print()
         print("  # 上传内容")
         print("  python xiaohongshu_uploader.py \\")
-        print("    ~/claude-workflows/60_Published/social-media/yuejian/2026-03-12_xxx_小红书.md \\")
-        print("    ~/claude-workflows/60_Published/social-media/output/article1/")
+        print("    ~/Desktop/vault/60_Published/social-media/yuejian/2026-03-12_xxx_小红書.md \\")
+        print("    ~/Desktop/vault/60_Published/social-media/output/article1/")
         sys.exit(1)
 
     md_path = Path(args.markdown).expanduser()

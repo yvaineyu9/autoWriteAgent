@@ -26,10 +26,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 
-# 配置路径
-WORKSPACE_DIR = Path.home() / "claude-workflows"
-INBOX_DIR = WORKSPACE_DIR / "00_Inbox"
-SECRETS_DIR = WORKSPACE_DIR / ".secrets"
+# 配置路径（数据仓库独立于代码仓库）
+VAULT_PATH = Path(os.getenv("VAULT_PATH", "~/Desktop/vault")).expanduser()
+INBOX_DIR = VAULT_PATH / "00_Inbox"
+SECRETS_DIR = VAULT_PATH / ".secrets"
 
 # 小红书限制
 MAX_TITLE_LENGTH = 20

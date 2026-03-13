@@ -64,3 +64,17 @@ social-media/tools/xhs-cli/node_modules/
 social-media/tools/xhs-cli/fonts/
 social-media/tools/xhs-cli/assets/
 .secrets/
+
+# 数据仓库已独立到 ~/Desktop/vault/
+00_Inbox/
+10_Daily/
+20_Project/
+30_Research/
+40_Wiki/
+50_Resources/
+60_Published/
+70_Distribution/
+90_Plans/
+
+# 环境变量
+.env
