@@ -15,6 +15,7 @@ import sys
 import random
 import argparse
 from pathlib import Path
+from datetime import datetime, timedelta
 
 BASE_DIR = Path.home() / "claude-workflows"
 SECRETS_DIR = BASE_DIR / ".secrets"
@@ -113,42 +114,86 @@ async def upload_one(page, parsed, images, index, total):
         await page.goto(PUBLISH_URL, wait_until="networkidle")
         await human_delay(2000, 3000)
 
-    # 切换到图文模式
-    for sel in ['span:has-text("上传图文")', 'div:has-text("上传图文"):not(:has(div))']:
+    # 切换到图文模式（必须点击"上传图文" tab）
+    tab_switched = False
+    for sel in [
+        'text="上传图文"',
+        ':text("上传图文")',
+        'div:has-text("上传图文"):not(:has(div:has-text("上传图文")))',
+        'span:has-text("上传图文")',
+    ]:
         try:
             tab = await page.wait_for_selector(sel, timeout=3000)
             if tab:
                 await tab.click()
-                await human_delay(1500, 2500)
+                await human_delay(2000, 3000)
+                tab_switched = True
+                print(f"  {label}   ✅ 已切换到图文模式")
                 break
         except Exception:
             continue
+    if not tab_switched:
+        # JS 兜底
+        try:
+            await page.evaluate("""() => {
+                const tabs = document.querySelectorAll('div, span, a');
+                for (const t of tabs) {
+                    if (t.textContent.trim() === '上传图文' || t.textContent.trim() === '上传图文') {
+                        t.click();
+                        return true;
+                    }
+                }
+                return false;
+            }""")
+            await human_delay(2000, 3000)
+            print(f"  {label}   ✅ 已通过 JS 切换到图文模式")
+        except Exception:
+            print(f"  {label}   ⚠️ 未能切换到图文模式")
+
+    # 等待图片上传区域出现
+    await human_delay(1000, 2000)
 
     # 1. 上传图片
     print(f"  {label} 📸 上传 {len(images)} 张图片...")
     image_paths = [str(img.resolve()) for img in images]
+
+    # 等待页面 file input 加载
+    await human_delay(2000, 3000)
     file_inputs = await page.query_selector_all('input[type="file"]')
+    print(f"  {label}   找到 {len(file_inputs)} 个 file input")
+
     uploaded = False
-    for fi in file_inputs:
+    for idx, fi in enumerate(file_inputs):
         accept = await fi.get_attribute('accept') or ''
-        if accept and '.mp4' in accept and '.jpg' not in accept and '.png' not in accept:
+        print(f"  {label}   input[{idx}] accept='{accept}'")
+        # 跳过只接受视频的
+        if accept and 'video' in accept and 'image' not in accept:
             continue
         try:
             await fi.set_input_files(image_paths)
             uploaded = True
+            print(f"  {label}   ✅ 通过 input[{idx}] 上传成功")
             break
-        except Exception:
+        except Exception as e:
+            print(f"  {label}   input[{idx}] 失败: {e}")
             continue
+
     if not uploaded:
-        for fi in file_inputs:
+        # 兜底：尝试所有 file input
+        for idx, fi in enumerate(file_inputs):
             try:
                 await fi.set_input_files(image_paths)
                 uploaded = True
+                print(f"  {label}   ✅ 兜底通过 input[{idx}] 上传成功")
                 break
             except Exception:
                 continue
+
     if not uploaded:
         print(f"  {label} ❌ 图片上传失败")
+        ss = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_upload_{index}.png")
+        await page.screenshot(path=ss, full_page=True)
+        print(f"  {label} 📸 截图: {ss}")
         return False
 
     # 等待上传完成
@@ -233,58 +278,173 @@ async def upload_one(page, parsed, images, index, total):
             print(f"  {label} ⚠️ 话题添加跳过")
     await human_delay(500, 1000)
 
-    # 5. 滚动到底部，点击暂存离开
-    print(f"  {label} 💾 保存草稿...")
+    # 5. 定时发布（明天 + 随机时间，8:00-22:00之间）
+    tomorrow = datetime.now() + timedelta(days=1)
+    rand_hour = random.randint(8, 21)
+    rand_minute = random.randint(0, 59)
+    schedule_time = tomorrow.replace(hour=rand_hour, minute=rand_minute, second=0)
+    schedule_str = schedule_time.strftime("%Y-%m-%d %H:%M")
+    print(f"  {label} 📅 定时发布: {schedule_str}")
+
     await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
     await human_delay(2000, 3000)
 
     saved = False
-    # 尝试点击"暂存离开"
-    try:
-        btn = await page.wait_for_selector('button:has-text("暂存离开")', timeout=5000)
-        if btn:
-            await btn.scroll_into_view_if_needed()
-            await human_delay(500, 800)
-            await btn.click()
-            await human_delay(3000, 5000)
-            saved = True
-    except Exception:
-        pass
 
-    if not saved:
-        # JS 兜底
+    # 找到"定时发布"旁边的 toggle 开关并打开
+    schedule_toggled = False
+
+    # 方法1: 找到"定时发布"文字，然后点击其旁边的 toggle/switch
+    try:
+        toggled = await page.evaluate("""() => {
+            // 找到包含"定时发布"的元素
+            const els = document.querySelectorAll('*');
+            for (const el of els) {
+                if (el.childNodes.length === 1 && el.textContent.trim() === '定时发布') {
+                    // 找到其父元素中的 toggle/switch
+                    const parent = el.closest('div') || el.parentElement;
+                    if (!parent) continue;
+                    // 尝试点击同级或相邻的 toggle
+                    const toggle = parent.querySelector('input[type="checkbox"], [class*="switch"], [class*="toggle"], [role="switch"]');
+                    if (toggle) {
+                        toggle.click();
+                        return 'found-toggle';
+                    }
+                    // 也可能整个行是可点击的
+                    parent.click();
+                    return 'clicked-parent';
+                }
+            }
+            return false;
+        }""")
+        if toggled:
+            await human_delay(1500, 2500)
+            schedule_toggled = True
+            print(f"  {label}   ✅ 定时发布toggle: {toggled}")
+    except Exception as e:
+        print(f"  {label}   toggle方法1异常: {e}")
+
+    if not schedule_toggled:
+        # 方法2: 直接找所有 switch/toggle，取最后一个（通常定时发布在最下面）
         try:
-            result = await page.evaluate("""() => {
-                const els = document.querySelectorAll('button, div[class*="btn"]');
-                for (const el of els) {
-                    if (el.textContent.includes('暂存')) {
-                        el.click();
+            toggled2 = await page.evaluate("""() => {
+                const switches = document.querySelectorAll('[class*="switch"], [role="switch"]');
+                // 定时发布的开关通常是最后一个
+                for (const sw of switches) {
+                    const text = sw.closest('div')?.textContent || '';
+                    if (text.includes('定时发布')) {
+                        sw.click();
                         return true;
                     }
                 }
                 return false;
             }""")
-            if result:
-                await human_delay(3000, 5000)
-                saved = True
+            if toggled2:
+                await human_delay(1500, 2500)
+                schedule_toggled = True
+                print(f"  {label}   ✅ 方法2打开了定时发布toggle")
         except Exception:
             pass
 
-    if saved:
-        # 可能会弹确认对话框
+    await human_delay(1000, 1500)
+
+    # 截图看 toggle 后的 UI
+    ss_schedule = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_schedule_ui_{index}.png")
+    await page.screenshot(path=ss_schedule)
+    print(f"  {label}   📸 定时发布UI截图: {ss_schedule}")
+
+    # 设置日期和时间
+    date_str = schedule_time.strftime("%Y-%m-%d")
+    time_str = schedule_time.strftime("%H:%M")
+
+    # 列出所有 input 帮助调试（toggle 开启后应该出现新的日期时间 input）
+    inputs_info = await page.evaluate("""() => {
+        const inputs = document.querySelectorAll('input');
+        return Array.from(inputs).map(i => ({
+            type: i.type, placeholder: i.placeholder,
+            value: i.value, cls: i.className.slice(0, 50)
+        }));
+    }""")
+    print(f"  {label}   页面inputs: {json.dumps(inputs_info, ensure_ascii=False)}")
+
+    # 尝试填写日期
+    date_filled = False
+    for sel in [
+        'input[placeholder*="日期"]',
+        'input[placeholder*="选择日期"]',
+        'input[type="date"]',
+        '.date-picker input',
+        'input[class*="date"]',
+    ]:
         try:
-            confirm_btn = await page.wait_for_selector(
-                'button:has-text("确定"), button:has-text("确认"), button:has-text("保存")',
-                timeout=3000
-            )
-            if confirm_btn:
-                await confirm_btn.click()
-                await human_delay(2000, 3000)
-                print(f"  {label} ✅ 草稿已保存（已确认）")
-            else:
-                print(f"  {label} ✅ 草稿已保存")
+            date_input = await page.wait_for_selector(sel, timeout=2000)
+            if date_input:
+                await date_input.click()
+                await human_delay(300, 500)
+                await date_input.fill(date_str)
+                await human_delay(500, 800)
+                date_filled = True
+                print(f"  {label}   填入日期: {date_str}")
+                break
         except Exception:
-            print(f"  {label} ✅ 草稿已保存")
+            continue
+
+    # 尝试填写时间
+    time_filled = False
+    for sel in [
+        'input[placeholder*="时间"]',
+        'input[placeholder*="选择时间"]',
+        'input[type="time"]',
+        '.time-picker input',
+        'input[class*="time"]',
+    ]:
+        try:
+            time_input = await page.wait_for_selector(sel, timeout=2000)
+            if time_input:
+                await time_input.click()
+                await human_delay(300, 500)
+                await time_input.fill(time_str)
+                await human_delay(500, 800)
+                time_filled = True
+                print(f"  {label}   填入时间: {time_str}")
+                break
+        except Exception:
+            continue
+
+    # 如果没找到标准 input，尝试找 d-text 类型的 input（小红书可能用自定义组件）
+    if not date_filled or not time_filled:
+        # 截图看当前状态
+        ss_debug = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_datetime_{index}.png")
+        await page.screenshot(path=ss_debug)
+        print(f"  {label}   📸 日期时间调试截图: {ss_debug}")
+        print(f"  {label}   ⚠️ 日期填入:{date_filled} 时间填入:{time_filled}")
+
+    await human_delay(1000, 1500)
+
+    if not schedule_toggled:
+        print(f"  {label}   ❌ 定时发布开关未能打开，跳过发布以防直接发布")
+        return False
+
+    # 点击"发布"按钮
+    try:
+        pub_btn = await page.wait_for_selector('button:has-text("发布")', timeout=5000)
+        if pub_btn:
+            await pub_btn.scroll_into_view_if_needed()
+            await human_delay(500, 800)
+            await pub_btn.click()
+            await human_delay(3000, 5000)
+            saved = True
+            print(f"  {label}   ✅ 点击了发布按钮")
+    except Exception as e:
+        print(f"  {label}   发布按钮异常: {e}")
+
+    # 截图确认结果
+    ss_after = str(BASE_DIR / "60_Published" / "social-media" / "output" / f"debug_after_save_{index}.png")
+    await page.screenshot(path=ss_after)
+    print(f"  {label}   📸 发布后截图: {ss_after}")
+
+    if saved:
+        print(f"  {label} ✅ 草稿保存流程完成")
     else:
         print(f"  {label} ❌ 保存失败！")
         # 截图
