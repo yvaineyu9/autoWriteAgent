@@ -49,11 +49,16 @@ def _init_schema(conn: sqlite3.Connection):
             content_path  TEXT,
             account_id    INTEGER NOT NULL REFERENCES accounts(id),
             title         TEXT NOT NULL,
+            body_text     TEXT,
+            tags          TEXT,
+            image_paths   TEXT,
+            cover_path    TEXT,
+            platform_post_id TEXT,
+            platform_status  TEXT DEFAULT 'unknown',
             post_url      TEXT,
             scheduled_at  TEXT,
             published_at  TEXT,
-            status        TEXT NOT NULL DEFAULT 'draft'
-                          CHECK(status IN ('draft', 'published', 'tracking', 'archived')),
+            status        TEXT NOT NULL DEFAULT 'draft',
             created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
         );
 
@@ -71,6 +76,9 @@ def _init_schema(conn: sqlite3.Connection):
     """)
     conn.commit()
 
+    # 迁移已有数据库（幂等）
+    _migrate_schema(conn)
+
     # 初始化默认人设（幂等）
     _seed_personas(conn)
 
@@ -85,6 +93,23 @@ def _seed_personas(conn: sqlite3.Connection):
             "INSERT OR IGNORE INTO personas (id, name, config_path) VALUES (?, ?, ?)",
             (pid, name, cfg),
         )
+    conn.commit()
+
+
+def _migrate_schema(conn: sqlite3.Connection):
+    """为已有数据库添加新字段（幂等，缺啥补啥）"""
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()}
+    migrations = [
+        ("body_text",         "TEXT"),
+        ("tags",              "TEXT"),
+        ("image_paths",       "TEXT"),
+        ("cover_path",        "TEXT"),
+        ("platform_post_id",  "TEXT"),
+        ("platform_status",   "TEXT DEFAULT 'unknown'"),
+    ]
+    for col, col_type in migrations:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE publications ADD COLUMN {col} {col_type}")
     conn.commit()
 
 
@@ -119,6 +144,54 @@ def add_account(persona_id: str, platform: str, account_name: str, account_id: s
         (persona_id, platform, account_name, account_id),
     )
     conn.commit()
+
+
+def create_publication(
+    account_id: int,
+    title: str,
+    content_path: str = None,
+    body_text: str = None,
+    tags: str = None,
+    image_paths: str = None,
+    cover_path: str = None,
+    status: str = "draft",
+    published_at: str = None,
+    post_url: str = None,
+) -> int:
+    """创建发布记录，返回记录 ID"""
+    conn = get_conn()
+    cur = conn.execute(
+        """INSERT INTO publications
+           (content_path, account_id, title, body_text, tags, image_paths, cover_path,
+            status, published_at, post_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (content_path, account_id, title, body_text, tags, image_paths, cover_path,
+         status, published_at, post_url),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_publications(persona_id: str = None, status: str = None, limit: int = 50):
+    """列出发布记录"""
+    conn = get_conn()
+    sql = """
+        SELECT pub.*, a.account_name, a.platform, p.name as persona_name
+        FROM publications pub
+        JOIN accounts a ON pub.account_id = a.id
+        JOIN personas p ON a.persona_id = p.id
+        WHERE 1=1
+    """
+    params = []
+    if persona_id:
+        sql += " AND p.id = ?"
+        params.append(persona_id)
+    if status:
+        sql += " AND pub.status = ?"
+        params.append(status)
+    sql += " ORDER BY pub.created_at DESC LIMIT ?"
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 if __name__ == "__main__":

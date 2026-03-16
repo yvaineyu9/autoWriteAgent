@@ -3,9 +3,7 @@
 ## 概述
 
 这是一个 Node.js 命令行工具，用于将 Markdown 内容生成小红书风格的卡片图片（1080×1802px PNG）。
-工具位于 `/Users/smalldog/Desktop/xhs-cli/`。
-
-同步版本：`/Users/smalldog/Desktop/xhs 排版/xhs-layout-tool-月见-关系.html`（浏览器可视化版本）
+工具位于 `social-media/tools/xhs-cli/`。
 
 ## 快速使用
 
@@ -28,7 +26,7 @@ cat > /tmp/xhs-content.md << 'EOF'
 EOF
 
 # 2. 生成图片
-node /Users/smalldog/Desktop/xhs-cli/xhs-gen.js \
+node social-media/tools/xhs-cli/xhs-gen.js \
   -i /tmp/xhs-content.md \
   -o /tmp/xhs-output/
 
@@ -90,20 +88,20 @@ node /Users/smalldog/Desktop/xhs-cli/xhs-gen.js \
 
 ## 注意事项
 
-- **Emoji 不支持**：`@napi-rs/canvas` 无法渲染 emoji，请在标题和内容中避免使用 emoji 字符
+- **Emoji 支持**：macOS 上已注册 Apple Color Emoji 字体，可以正常渲染 emoji（如 🌙 🪐）。非 macOS 系统需确保有 emoji 字体。
 - 封面图建议尺寸 1080×580 或等比例
 - 如需更换头像/封面，传入本地文件路径即可
 
 ## Stdin 模式
 
 ```bash
-echo "# 标题\n正文内容" | node /Users/smalldog/Desktop/xhs-cli/xhs-gen.js -o /tmp/output/
+echo "# 标题\n正文内容" | node social-media/tools/xhs-cli/xhs-gen.js -o /tmp/output/
 ```
 
 ## 示例：完整调用
 
 ```bash
-node /Users/smalldog/Desktop/xhs-cli/xhs-gen.js \
+node social-media/tools/xhs-cli/xhs-gen.js \
   -i /tmp/article.md \
   -o /tmp/xhs-cards/ \
   --author-name "我的账号" \

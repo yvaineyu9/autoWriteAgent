@@ -12,7 +12,7 @@ argument-hint: "[提交说明]"
 
 ### Step 1：检查状态
 ```bash
-cd /Users/smalldog/Desktop/claude-workflows && git status
+cd /Users/moonvision/claude-workflows && git status
 ```
 
 ### Step 2：暂存所有修改
