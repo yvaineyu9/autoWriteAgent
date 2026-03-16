@@ -97,7 +97,7 @@ def _seed_personas(conn: sqlite3.Connection):
 
 
 def _migrate_schema(conn: sqlite3.Connection):
-    """为已有数据库添加新字段（幂等，缺啥补啥）"""
+    """为已有数据库添加新字段 + 修复旧约束（幂等）"""
     existing = {r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()}
     migrations = [
         ("body_text",         "TEXT"),
@@ -111,6 +111,42 @@ def _migrate_schema(conn: sqlite3.Connection):
         if col not in existing:
             conn.execute(f"ALTER TABLE publications ADD COLUMN {col} {col_type}")
     conn.commit()
+
+    # 修复旧 CHECK 约束（不含 'ready' 状态的旧表）
+    schema = conn.execute("SELECT sql FROM sqlite_master WHERE name='publications'").fetchone()
+    if schema and "CHECK" in schema[0]:
+        rows = conn.execute("SELECT * FROM publications").fetchall()
+        col_names = [r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()]
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DROP TABLE publications")
+        conn.execute("""
+            CREATE TABLE publications (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_path  TEXT,
+                account_id    INTEGER NOT NULL REFERENCES accounts(id),
+                title         TEXT NOT NULL,
+                body_text     TEXT,
+                tags          TEXT,
+                image_paths   TEXT,
+                cover_path    TEXT,
+                platform_post_id TEXT,
+                platform_status  TEXT DEFAULT 'unknown',
+                post_url      TEXT,
+                scheduled_at  TEXT,
+                published_at  TEXT,
+                status        TEXT NOT NULL DEFAULT 'draft',
+                created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        new_cols = [r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()]
+        for row in rows:
+            d = dict(zip(col_names, row))
+            vals = {c: d.get(c) for c in new_cols if c in d}
+            phs = ", ".join(["?"] * len(vals))
+            cn = ", ".join(vals.keys())
+            conn.execute(f"INSERT INTO publications ({cn}) VALUES ({phs})", list(vals.values()))
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 # ─── 便捷查询 ───
