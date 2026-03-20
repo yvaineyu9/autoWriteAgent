@@ -121,6 +121,9 @@ def list_inspirations() -> list[dict[str, object]]:
         frontmatter, body = _parse_frontmatter(raw)
         relative_path = str(path.relative_to(settings.project_root))
         status_row = statuses.get(relative_path)
+        tags = frontmatter.get("tags", [])
+        if isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
         items.append(
             {
                 "path": relative_path,
@@ -129,7 +132,7 @@ def list_inspirations() -> list[dict[str, object]]:
                 "source": frontmatter.get("source"),
                 "persona": frontmatter.get("persona"),
                 "platform": frontmatter.get("platform"),
-                "tags": frontmatter.get("tags", []),
+                "tags": tags,
                 "created": frontmatter.get("created"),
                 "status": status_row["status"] if status_row else "idea",
                 "content_id": status_row["content_id"] if status_row else None,
@@ -174,6 +177,9 @@ def get_inspiration(relative_path: str) -> dict[str, object]:
     raw = path.read_text(encoding="utf-8")
     frontmatter, body = _parse_frontmatter(raw)
     status_row = _status_by_source_path().get(relative_path)
+    tags = frontmatter.get("tags", [])
+    if isinstance(tags, str):
+        tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
     return {
         "path": relative_path,
         "title": str(frontmatter.get("title") or path.stem),
@@ -181,7 +187,7 @@ def get_inspiration(relative_path: str) -> dict[str, object]:
         "source": frontmatter.get("source"),
         "persona": frontmatter.get("persona"),
         "platform": frontmatter.get("platform"),
-        "tags": frontmatter.get("tags", []),
+        "tags": tags,
         "created": frontmatter.get("created"),
         "status": status_row["status"] if status_row else "idea",
         "content_id": status_row["content_id"] if status_row else None,

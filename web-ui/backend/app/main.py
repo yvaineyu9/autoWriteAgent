@@ -74,6 +74,8 @@ async def draft_content(content_id: str, payload: DraftRequest):
 
     async def runner():
         await registry.emit(task, "task.started", {"task_type": "draft"})
+        previous = storage.read_content(content_id)
+        previous_status = previous["status"] if previous else "idea"
         try:
             storage.transition_content_status(content_id=content_id, to_status="drafting", operator="agent:content-creation", note="发起写作")
             result = await agent_wrapper.run_content_task(
@@ -96,7 +98,12 @@ async def draft_content(content_id: str, payload: DraftRequest):
             await registry.finish(task, "succeeded")
         except Exception as exc:
             await registry.emit(task, "task.failed", {"error": str(exc)})
-            storage.transition_content_status(content_id=content_id, to_status="draft", operator="agent:content-creation", note=f"写作失败: {exc}")
+            storage.transition_content_status(
+                content_id=content_id,
+                to_status=previous_status,
+                operator="agent:content-creation",
+                note=f"写作失败: {exc}",
+            )
             await registry.finish(task, "failed")
 
     asyncio.create_task(runner())
@@ -199,6 +206,11 @@ async def stream_task_events(task_id: str):
     async def event_source():
         for item in task.events:
             yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        while not task.queue.empty():
+            try:
+                task.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
         while True:
             item = await task.queue.get()
             if item is None:
