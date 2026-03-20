@@ -2,3 +2,6 @@ requests
 beautifulsoup4
 faster-whisper
 notion-client
+fastapi
+uvicorn
+pydantic
