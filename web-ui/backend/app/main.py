@@ -4,6 +4,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from . import agent_wrapper, storage
 from .models import (
+    ContentSaveRequest,
     DraftRequest,
     InspirationCreate,
     InspirationUpdate,
@@ -60,14 +62,28 @@ def put_inspiration(path: str, payload: InspirationUpdate):
     return storage.update_inspiration(path, payload.model_dump(exclude_unset=True))
 
 
+@app.post("/api/inspiration-actions/activate")
+def activate_inspiration_action(payload: dict[str, str]):
+    path = payload["path"]
+    return storage.activate_inspiration(path)
+
+
 @app.delete("/api/inspirations/{path:path}")
 def remove_inspiration(path: str):
     storage.delete_inspiration(path)
     return {"ok": True}
 
 
+@app.post("/api/inspirations/{path:path}/activate")
+def activate_inspiration(path: str):
+    return storage.activate_inspiration(path)
+
+
 @app.post("/api/contents/{content_id}/draft")
 async def draft_content(content_id: str, payload: DraftRequest):
+    existing = registry.find_active(content_id=content_id, task_type="draft")
+    if existing:
+        raise HTTPException(status_code=409, detail=f"draft task already running: {existing.task_id}")
     task = registry.create("draft", content_id)
     task.status = "running"
     task.started_at = task.started_at or datetime.utcnow()
@@ -86,15 +102,24 @@ async def draft_content(content_id: str, payload: DraftRequest):
                 input_path=payload.input_path,
                 on_event=lambda event, event_payload: registry.emit(task, event, event_payload),
             )
-            output_path = storage.write_output_markdown(
+            output_file = result.get("output_file")
+            output_path = str(Path(str(output_file)).relative_to(storage.settings.vault_path)) if output_file else None
+            storage.update_content_metadata(
                 content_id=content_id,
                 title=str(result["title"]),
-                persona=payload.persona,
+                persona_id=payload.persona,
                 platform=payload.platform,
-                body=str(result["body"]),
+                output_path=output_path,
                 review_score=result.get("review_score"),
+                operator="agent:content-creation",
+                note="真实 workflow 已完成归档",
             )
-            storage.transition_content_status(content_id=content_id, to_status="draft", operator="agent:content-creation", note=f"草稿已输出到 {output_path}")
+            storage.transition_content_status(
+                content_id=content_id,
+                to_status="draft",
+                operator="agent:content-creation",
+                note=f"草稿已输出到 {output_path or '未知路径'}",
+            )
             await registry.finish(task, "succeeded")
         except Exception as exc:
             await registry.emit(task, "task.failed", {"error": str(exc)})
@@ -112,6 +137,9 @@ async def draft_content(content_id: str, payload: DraftRequest):
 
 @app.post("/api/contents/{content_id}/revise")
 async def revise_content(content_id: str, payload: ReviseRequest):
+    existing = registry.find_active(content_id=content_id, task_type="revise")
+    if existing:
+        raise HTTPException(status_code=409, detail=f"revise task already running: {existing.task_id}")
     task = registry.create("revise", content_id)
     task.status = "running"
     task.started_at = task.started_at or datetime.utcnow()
@@ -123,9 +151,12 @@ async def revise_content(content_id: str, payload: ReviseRequest):
 
     async def runner():
         await registry.emit(task, "task.started", {"task_type": "revise"})
+        previous_status = content["status"]
         try:
             storage.transition_content_status(content_id=content_id, to_status="revising", operator="agent:revision", note="发起修改")
             revised = await agent_wrapper.run_revision_task(
+                persona=str(content["persona_id"] or "chongxiaoyu"),
+                platform=str(content["platform"] or "xiaohongshu"),
                 instruction=payload.instruction,
                 current_content=current_body,
                 on_event=lambda event, event_payload: registry.emit(task, event, event_payload),
@@ -135,6 +166,12 @@ async def revise_content(content_id: str, payload: ReviseRequest):
             await registry.finish(task, "succeeded")
         except Exception as exc:
             await registry.emit(task, "task.failed", {"error": str(exc)})
+            storage.transition_content_status(
+                content_id=content_id,
+                to_status=previous_status,
+                operator="agent:revision",
+                note=f"修改失败: {exc}",
+            )
             await registry.finish(task, "failed")
 
     asyncio.create_task(runner())
@@ -143,8 +180,34 @@ async def revise_content(content_id: str, payload: ReviseRequest):
 
 @app.post("/api/contents/{content_id}/finalize")
 def finalize_content(content_id: str):
-    storage.finalize_content(content_id)
+    try:
+        storage.finalize_content(content_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
+
+
+@app.get("/api/contents")
+def get_contents(status: str | None = None, limit: int = 50):
+    return storage.list_contents(status=status, limit=limit)
+
+
+@app.get("/api/contents/{content_id}")
+def get_content_detail(content_id: str):
+    content = storage.read_content_detail(content_id)
+    if not content:
+        raise HTTPException(status_code=404, detail="content not found")
+    return content
+
+
+@app.put("/api/contents/{content_id}")
+def put_content_detail(content_id: str, payload: ContentSaveRequest):
+    try:
+        return storage.save_content_detail(content_id, payload.body, payload.title)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/selection/recommend")
@@ -204,14 +267,17 @@ async def stream_task_events(task_id: str):
         raise HTTPException(status_code=404, detail="task not found")
 
     async def event_source():
-        for item in task.events:
-            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
-        while not task.queue.empty():
-            try:
-                task.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        # 回放已有事件，用索引追踪位置避免竞态丢失
+        replay_index = 0
+        while replay_index < len(task.events):
+            yield f"data: {json.dumps(task.events[replay_index], ensure_ascii=False)}\n\n"
+            replay_index += 1
+        # 等待新事件
         while True:
+            # 在等待之前先检查回放期间是否有新事件加入 events 列表
+            while replay_index < len(task.events):
+                yield f"data: {json.dumps(task.events[replay_index], ensure_ascii=False)}\n\n"
+                replay_index += 1
             item = await task.queue.get()
             if item is None:
                 break

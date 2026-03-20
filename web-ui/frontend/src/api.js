@@ -14,8 +14,16 @@ async function request(path, options = {}) {
 
 export const api = {
   listInspirations: () => request("/inspirations"),
+  listContents: (status) => request(`/contents${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  getContent: (contentId) => request(`/contents/${contentId}`),
+  saveContent: (contentId, payload) =>
+    request(`/contents/${contentId}`, { method: "PUT", body: JSON.stringify(payload) }),
   createInspiration: (payload) =>
     request("/inspirations", { method: "POST", body: JSON.stringify(payload) }),
+  updateInspiration: (path, payload) =>
+    request(`/inspirations/${encodeURI(path)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  activateInspiration: (path) =>
+    request("/inspiration-actions/activate", { method: "POST", body: JSON.stringify({ path }) }),
   createDraft: (contentId, payload) =>
     request(`/contents/${contentId}/draft`, { method: "POST", body: JSON.stringify(payload) }),
   finalizeContent: (contentId) =>
@@ -25,6 +33,10 @@ export const api = {
   confirmSelection: (payload) =>
     request("/selection/confirm", { method: "POST", body: JSON.stringify(payload) }),
   listPublications: () => request("/publications"),
+  publishPublication: (publicationId, payload = {}) =>
+    request(`/publications/${publicationId}/publish`, { method: "POST", body: JSON.stringify(payload) }),
+  createPublicationMetric: (publicationId, payload) =>
+    request(`/publications/${publicationId}/metrics`, { method: "POST", body: JSON.stringify(payload) }),
 };
 
 export function subscribeTask(taskId, onMessage) {

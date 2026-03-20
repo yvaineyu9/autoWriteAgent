@@ -7,7 +7,7 @@
 
 功能：
     1. 添加月见的小红书账号
-    2. 扫描 60_Published/social-media/yuejian/ 下所有 .md 文件
+    2. 扫描 60_Published/social-media/yuejian/xiaohongshu/ 下所有 content.md
     3. 从 frontmatter + 文件名提取信息
     4. 为每篇创建 publications 记录
 """
@@ -21,7 +21,7 @@ from db import get_conn, add_account, create_publication
 import os
 
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "~/Desktop/vault")).expanduser()
-PUBLISHED_DIR = VAULT_PATH / "60_Published" / "social-media"
+PUBLISHED_DIR = VAULT_PATH / "60_Published" / "social-media" / "yuejian" / "xiaohongshu"
 
 
 def parse_frontmatter(content: str) -> dict:
@@ -45,23 +45,14 @@ def extract_title_from_content(content: str) -> str:
     return ""
 
 
-def parse_filename(filename: str) -> dict:
-    """从文件名提取日期和标题：2026-03-12_标题_小红书.md"""
-    name = filename.replace('.md', '')
+def parse_filename(name: str) -> dict:
+    """从目录名提取日期和标题：2026-03-12_标题"""
     parts = name.split('_', 1)
     result = {}
     if len(parts) >= 1 and re.match(r'\d{4}-\d{2}-\d{2}', parts[0]):
         result['date'] = parts[0]
     if len(parts) >= 2:
-        # 去掉末尾的 _小红书
-        title_part = parts[1]
-        if title_part.endswith('_小红书'):
-            title_part = title_part[:-4]
-        elif title_part.endswith('_公众号'):
-            title_part = title_part[:-4]
-        elif title_part.endswith('_Twitter'):
-            title_part = title_part[:-8]
-        result['title'] = title_part
+        result['title'] = parts[1]
     return result
 
 
@@ -93,19 +84,12 @@ def main():
 
     # ─── Step 2：扫描已发布内容 ───
 
-    published_dirs = [
-        PUBLISHED_DIR / "yuejian",     # yuejian 子目录
-        PUBLISHED_DIR,                  # 根目录（早期帖子）
-    ]
-
     md_files = []
-    for d in published_dirs:
-        if d.exists():
-            for f in sorted(d.glob("*.md")):
-                md_files.append(f)
+    if PUBLISHED_DIR.exists():
+        md_files = sorted(PUBLISHED_DIR.glob("*/content.md"))
 
     if not md_files:
-        print("未找到已发布的 .md 文件")
+        print("未找到已发布的 content.md 文件")
         return
 
     print(f"\n找到 {len(md_files)} 个已发布文件")
@@ -118,7 +102,7 @@ def main():
     for md_file in md_files:
         content = md_file.read_text(encoding='utf-8')
         fm = parse_frontmatter(content)
-        file_info = parse_filename(md_file.name)
+        file_info = parse_filename(md_file.parent.name)
 
         # 提取标题
         title = extract_title_from_content(content) or file_info.get('title', md_file.stem)
@@ -131,13 +115,6 @@ def main():
             published_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # 判断平台
-        platform_hint = fm.get('platform', '')
-        if '小红书' not in platform_hint and '小红书' not in md_file.name:
-            # 非小红书内容跳过（如 Twitter、公众号）
-            print(f"  跳过非小红书: {md_file.name}")
-            skipped += 1
-            continue
-
         # content_path 用相对于 vault 的路径
         content_path = str(md_file.relative_to(VAULT_PATH))
 

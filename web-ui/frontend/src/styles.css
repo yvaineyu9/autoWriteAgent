@@ -16,6 +16,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -74,7 +75,13 @@ textarea {
   flex-wrap: wrap;
 }
 
+.metrics input {
+  width: calc(20% - 8px);
+  min-width: 88px;
+}
+
 input,
+select,
 textarea {
   width: 100%;
   padding: 10px 12px;
@@ -112,6 +119,13 @@ button.ghost {
   margin-bottom: 8px;
 }
 
+.summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .compact .card h3 {
   font-size: 1rem;
 }
@@ -122,6 +136,18 @@ button.ghost {
   padding: 12px;
   background: #261d18;
   color: #e8dccd;
+}
+
+.preview {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgba(35, 30, 24, 0.12);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.preview pre {
+  white-space: pre-wrap;
 }
 
 .log pre {

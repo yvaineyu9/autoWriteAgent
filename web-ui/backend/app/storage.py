@@ -14,7 +14,7 @@ from .config import get_settings
 
 settings = get_settings()
 DB_PATH = settings.vault_path / "70_Distribution" / "distribution.db"
-INBOX_DIR = settings.project_root / "00_Inbox"
+INBOX_DIR = settings.vault_path / "00_Inbox"
 
 
 def get_conn() -> sqlite3.Connection:
@@ -63,6 +63,9 @@ def migrate() -> None:
         _ensure_column(conn, "publications", "content_id", "TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_publications_content_id ON publications(content_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_content_status_status ON content_status(status)")
+        _recover_transient_statuses(conn)
+        _repair_output_path_conflicts(conn)
+        _repair_invalid_terminal_statuses(conn)
         conn.commit()
 
 
@@ -72,30 +75,171 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, column_typ
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
+def _recover_transient_statuses(conn: sqlite3.Connection) -> None:
+    drafting_rows = conn.execute(
+        "SELECT content_id, output_path FROM content_status WHERE status = 'drafting'"
+    ).fetchall()
+    for row in drafting_rows:
+        next_status = "draft" if row["output_path"] else "idea"
+        conn.execute(
+            "UPDATE content_status SET status = ?, updated_at = datetime('now', 'localtime') WHERE content_id = ?",
+            (next_status, row["content_id"]),
+        )
+        conn.execute(
+            """INSERT INTO status_log (content_id, from_status, to_status, operator, note)
+               VALUES (?, 'drafting', ?, 'system', '服务重启后恢复瞬时状态')""",
+            (row["content_id"], next_status),
+        )
+
+    revising_rows = conn.execute(
+        "SELECT content_id, output_path FROM content_status WHERE status = 'revising'"
+    ).fetchall()
+    for row in revising_rows:
+        next_status = "final" if row["output_path"] else "draft"
+        conn.execute(
+            "UPDATE content_status SET status = ?, updated_at = datetime('now', 'localtime') WHERE content_id = ?",
+            (next_status, row["content_id"]),
+        )
+        conn.execute(
+            """INSERT INTO status_log (content_id, from_status, to_status, operator, note)
+               VALUES (?, 'revising', ?, 'system', '服务重启后恢复瞬时状态')""",
+            (row["content_id"], next_status),
+        )
+
+
+def _status_priority(status: str | None) -> int:
+    order = {
+        "published": 5,
+        "publishing": 4,
+        "final": 3,
+        "draft": 2,
+        "idea": 1,
+    }
+    return order.get(status or "", 0)
+
+
+def _repair_output_path_conflicts(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT content_id, status, output_path, updated_at
+        FROM content_status
+        WHERE output_path IS NOT NULL
+        ORDER BY output_path, updated_at DESC
+        """
+    ).fetchall()
+    grouped: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["output_path"]), []).append(row)
+
+    for output_path, items in grouped.items():
+        if len(items) <= 1:
+            continue
+        ranked = sorted(
+            items,
+            key=lambda item: (_status_priority(item["status"]), str(item["updated_at"] or "")),
+            reverse=True,
+        )
+        keeper = ranked[0]
+        for row in ranked[1:]:
+            fallback_status = "idea"
+            conn.execute(
+                """
+                UPDATE content_status
+                SET output_path = NULL,
+                    status = ?,
+                    updated_at = datetime('now', 'localtime')
+                WHERE content_id = ?
+                """,
+                (fallback_status, row["content_id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO status_log (content_id, from_status, to_status, operator, note)
+                VALUES (?, ?, ?, 'system', ?)
+                """,
+                (
+                    row["content_id"],
+                    row["status"],
+                    fallback_status,
+                    f"修复重复 output_path 绑定，保留 {keeper['content_id']} 使用 {output_path}",
+                ),
+            )
+
+
+def _repair_invalid_terminal_statuses(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT content_id, status
+        FROM content_status
+        WHERE output_path IS NULL
+          AND status IN ('draft', 'final', 'publishing', 'published')
+        """
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            """
+            UPDATE content_status
+            SET status = 'idea',
+                updated_at = datetime('now', 'localtime')
+            WHERE content_id = ?
+            """,
+            (row["content_id"],),
+        )
+        conn.execute(
+            """
+            INSERT INTO status_log (content_id, from_status, to_status, operator, note)
+            VALUES (?, ?, 'idea', 'system', '修复无输出文件的终态内容')
+            """,
+            (row["content_id"], row["status"]),
+        )
+
+
 def _slugify(value: str) -> str:
     cleaned = re.sub(r"[^\w\u4e00-\u9fff-]+", "-", value.strip()).strip("-").lower()
     return cleaned or "untitled"
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str | list[str]], str]:
-    if not raw.startswith("---\n"):
+    if not raw.startswith("---"):
         return {}, raw
-    parts = raw.split("\n---\n", 1)
+    # 支持 \r\n 和 \n 换行
+    normalized = raw.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return {}, raw
+    parts = normalized.split("\n---\n", 1)
     if len(parts) != 2:
         return {}, raw
-    frontmatter: dict[str, str | list[str]] = {}
-    for line in parts[0].splitlines()[1:]:
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if value.startswith("[") and value.endswith("]"):
-            items = [item.strip().strip("'\"") for item in value[1:-1].split(",") if item.strip()]
-            frontmatter[key] = items
-        else:
-            frontmatter[key] = value
-    return frontmatter, parts[1]
+    yaml_block = parts[0][4:]  # 去掉开头的 "---\n"
+    body = parts[1]
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(yaml_block)
+        if not isinstance(parsed, dict):
+            return {}, raw
+        # 确保值类型为 str 或 list[str]
+        frontmatter: dict[str, str | list[str]] = {}
+        for key, value in parsed.items():
+            if isinstance(value, list):
+                frontmatter[str(key)] = [str(item) for item in value]
+            elif value is not None:
+                frontmatter[str(key)] = str(value)
+        return frontmatter, body
+    except ImportError:
+        # 回退到简单解析
+        frontmatter = {}
+        for line in yaml_block.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if value.startswith("[") and value.endswith("]"):
+                items = [item.strip().strip("'\"") for item in value[1:-1].split(",") if item.strip()]
+                frontmatter[key] = items
+            else:
+                frontmatter[key] = value
+        return frontmatter, body
 
 
 def _dump_frontmatter(data: dict[str, object]) -> str:
@@ -116,10 +260,10 @@ def list_inspirations() -> list[dict[str, object]]:
     INBOX_DIR.mkdir(parents=True, exist_ok=True)
     statuses = _status_by_source_path()
     items: list[dict[str, object]] = []
-    for path in sorted(INBOX_DIR.glob("*.md"), reverse=True):
+    for path in sorted(INBOX_DIR.rglob("*.md"), reverse=True):
         raw = path.read_text(encoding="utf-8")
         frontmatter, body = _parse_frontmatter(raw)
-        relative_path = str(path.relative_to(settings.project_root))
+        relative_path = str(path.relative_to(settings.vault_path))
         status_row = statuses.get(relative_path)
         tags = frontmatter.get("tags", [])
         if isinstance(tags, str):
@@ -159,7 +303,7 @@ def create_inspiration(payload: dict[str, object]) -> dict[str, object]:
         "created": created,
     }
     path.write_text(f"{_dump_frontmatter(frontmatter)}\n{payload['body'].strip()}\n", encoding="utf-8")
-    relative_path = str(path.relative_to(settings.project_root))
+    relative_path = str(path.relative_to(settings.vault_path))
     content_id = ensure_content_record(
         title=title,
         source_path=relative_path,
@@ -173,7 +317,7 @@ def create_inspiration(payload: dict[str, object]) -> dict[str, object]:
 
 
 def get_inspiration(relative_path: str) -> dict[str, object]:
-    path = settings.project_root / relative_path
+    path = settings.vault_path / relative_path
     raw = path.read_text(encoding="utf-8")
     frontmatter, body = _parse_frontmatter(raw)
     status_row = _status_by_source_path().get(relative_path)
@@ -197,7 +341,7 @@ def get_inspiration(relative_path: str) -> dict[str, object]:
 def update_inspiration(relative_path: str, payload: dict[str, object]) -> dict[str, object]:
     current = get_inspiration(relative_path)
     merged = {**current, **{k: v for k, v in payload.items() if v is not None}}
-    path = settings.project_root / relative_path
+    path = settings.vault_path / relative_path
     frontmatter = {
         "title": merged["title"],
         "source": merged["source"],
@@ -221,7 +365,7 @@ def update_inspiration(relative_path: str, payload: dict[str, object]) -> dict[s
 
 
 def delete_inspiration(relative_path: str) -> None:
-    path = settings.project_root / relative_path
+    path = settings.vault_path / relative_path
     if path.exists():
         path.unlink()
 
@@ -285,6 +429,25 @@ def ensure_content_record(
         return content_id
 
 
+def activate_inspiration(relative_path: str) -> dict[str, object]:
+    inspiration = get_inspiration(relative_path)
+    content_id = inspiration.get("content_id")
+    if content_id:
+        return inspiration
+    content_id = ensure_content_record(
+        title=str(inspiration["title"]),
+        source_path=relative_path,
+        persona_id=inspiration.get("persona"),
+        platform=inspiration.get("platform"),
+        status="idea",
+        operator="human",
+        note="从灵感池激活内容",
+    )
+    updated = get_inspiration(relative_path)
+    updated["content_id"] = content_id
+    return updated
+
+
 def transition_content_status(
     *,
     content_id: str,
@@ -329,6 +492,18 @@ def update_content_metadata(
     note: str | None = None,
 ) -> None:
     with closing(get_conn()) as conn:
+        if output_path:
+            existing = conn.execute(
+                """
+                SELECT content_id
+                FROM content_status
+                WHERE output_path = ? AND content_id != ?
+                LIMIT 1
+                """,
+                (output_path, content_id),
+            ).fetchone()
+            if existing:
+                raise ValueError(f"output_path 已被其他内容占用: {output_path}")
         conn.execute(
             """UPDATE content_status
                SET title = ?, persona_id = ?, platform = ?, source_path = COALESCE(?, source_path),
@@ -366,6 +541,23 @@ def list_final_contents(persona: str | None = None, platform: str | None = None,
     return [dict(row) for row in rows]
 
 
+def list_contents(status: str | None = None, limit: int = 50) -> list[dict[str, object]]:
+    with closing(get_conn()) as conn:
+        sql = """
+            SELECT content_id, title, persona_id, platform, status, source_path, output_path, review_score, updated_at
+            FROM content_status
+            WHERE 1=1
+        """
+        params: list[object] = []
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(row) for row in rows]
+
+
 def list_publications(limit: int = 50) -> list[dict[str, object]]:
     with closing(get_conn()) as conn:
         rows = conn.execute(
@@ -396,6 +588,9 @@ def create_publications_for_contents(content_ids: Iterable[str]) -> list[int]:
                 "SELECT id FROM accounts WHERE persona_id = ? AND platform = ? AND status = 'active'",
                 (content["persona_id"], content["platform"]),
             ).fetchall()
+            if not accounts and content["persona_id"] and content["platform"]:
+                account_id = _ensure_default_account(conn, str(content["persona_id"]), str(content["platform"]))
+                accounts = [{"id": account_id}]
             for account in accounts:
                 cur = conn.execute(
                     """INSERT INTO publications (content_id, content_path, account_id, title, status)
@@ -412,6 +607,24 @@ def create_publications_for_contents(content_ids: Iterable[str]) -> list[int]:
             )
         conn.commit()
     return ids
+
+
+def _ensure_default_account(conn: sqlite3.Connection, persona_id: str, platform: str) -> int:
+    existing = conn.execute(
+        "SELECT id FROM accounts WHERE persona_id = ? AND platform = ? ORDER BY id LIMIT 1",
+        (persona_id, platform),
+    ).fetchone()
+    if existing:
+        conn.execute("UPDATE accounts SET status = 'active' WHERE id = ?", (existing["id"],))
+        return int(existing["id"])
+
+    persona = conn.execute("SELECT name FROM personas WHERE id = ?", (persona_id,)).fetchone()
+    account_name = f"{persona['name'] if persona else persona_id}-{platform}"
+    cur = conn.execute(
+        "INSERT INTO accounts (persona_id, platform, account_name, status) VALUES (?, ?, ?, 'active')",
+        (persona_id, platform, account_name),
+    )
+    return int(cur.lastrowid)
 
 
 def mark_publication_published(publication_id: int, post_url: str | None, published_at: str | None) -> None:
@@ -455,6 +668,11 @@ def create_metric(publication_id: int, payload: dict[str, object]) -> None:
 
 
 def finalize_content(content_id: str) -> None:
+    current = read_content(content_id)
+    if not current:
+        raise FileNotFoundError(f"content 不存在: {content_id}")
+    if not current.get("output_path"):
+        raise ValueError("当前内容还没有生成稿件，不能直接定稿")
     transition_content_status(content_id=content_id, to_status="final", operator="human", note="人工定稿")
 
 
@@ -462,6 +680,72 @@ def read_content(content_id: str) -> dict[str, object] | None:
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM content_status WHERE content_id = ?", (content_id,)).fetchone()
     return dict(row) if row else None
+
+
+def read_content_detail(content_id: str) -> dict[str, object] | None:
+    row = read_content(content_id)
+    if not row:
+        return None
+    body = ""
+    resolved_path = None
+    if row.get("output_path"):
+        resolved_path = settings.vault_path / str(row["output_path"])
+    elif row.get("source_path"):
+        resolved_path = settings.vault_path / str(row["source_path"])
+    if resolved_path and resolved_path.exists():
+        body = resolved_path.read_text(encoding="utf-8")
+    row["body"] = body
+    row["resolved_path"] = str(resolved_path) if resolved_path else None
+    return row
+
+
+def save_content_detail(content_id: str, body: str, title: str | None = None) -> dict[str, object]:
+    current = read_content(content_id)
+    if not current:
+        raise FileNotFoundError(f"content 不存在: {content_id}")
+
+    resolved_path: Path | None = None
+    if current.get("output_path"):
+        resolved_path = settings.vault_path / str(current["output_path"])
+    elif current.get("source_path"):
+        resolved_path = settings.vault_path / str(current["source_path"])
+    if not resolved_path:
+        raise FileNotFoundError(f"content 没有关联文件: {content_id}")
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    next_title = title or str(current.get("title") or "未命名内容")
+
+    if resolved_path.suffix == ".md":
+        raw = body.strip()
+        if raw.startswith("---\n"):
+            resolved_path.write_text(raw + "\n", encoding="utf-8")
+        else:
+            frontmatter = {
+                "title": next_title,
+                "persona": current.get("persona_id"),
+                "platform": current.get("platform"),
+                "content_id": content_id,
+            }
+            resolved_path.write_text(f"{_dump_frontmatter(frontmatter)}\n{raw}\n", encoding="utf-8")
+    else:
+        resolved_path.write_text(body, encoding="utf-8")
+
+    with closing(get_conn()) as conn:
+        previous_status = str(current["status"])
+        conn.execute(
+            """UPDATE content_status
+               SET title = ?, updated_at = datetime('now', 'localtime')
+               WHERE content_id = ?""",
+            (next_title, content_id),
+        )
+        conn.execute(
+            """INSERT INTO status_log (content_id, from_status, to_status, operator, note)
+               VALUES (?, ?, ?, 'human', '通过 Web UI 保存内容')""",
+            (content_id, previous_status, previous_status),
+        )
+        conn.commit()
+
+    return read_content_detail(content_id) or {}
 
 
 def write_output_markdown(content_id: str, title: str, persona: str, platform: str, body: str, review_score: int | None = None) -> str:

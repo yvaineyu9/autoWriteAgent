@@ -9,12 +9,14 @@ argument-hint: "[操作指令]"
 
 管理社媒内容的多账号分发、发布状态追踪和数据采集。数据存储在 `70_Distribution/distribution.db`（SQLite）。
 
+统一约定见 [../../CONVENTIONS.md](../../CONVENTIONS.md)。
+
 ## 工具路径
 
 所有 CLI 工具位于 `social-media/tools/distribution/`，运行时需先 `cd` 到该目录：
 
 ```bash
-cd ~/claude-workflows/social-media/tools/distribution
+cd <PROJECT_ROOT>/social-media/tools/distribution
 ```
 
 ## 功能
@@ -39,7 +41,7 @@ python3 publish.py add-account --persona yuejian --platform xiaohongshu --name "
 ```bash
 # 为虫小宇的所有账号创建发布任务
 python3 publish.py create --persona chongxiaoyu --title "文章标题" \
-  --content-path "60_Published/social-media/2026-03-13_xxx.md"
+  --content-path "60_Published/social-media/chongxiaoyu/xiaohongshu/2026-03-13_标题/content.md"
 
 # 指定发布时间
 python3 publish.py create --persona yuejian --title "标题" --scheduled-at "2026-03-14 20:00"
@@ -86,7 +88,7 @@ python3 metrics.py history --pub-id 1
 ## 工作流
 
 ```
-内容工厂产出 → 60_Published/
+内容工厂产出 → 60_Published/social-media/<persona>/<platform>/.../content.md
     ↓
 /publishing create（为人设下所有账号创建任务）
     ↓
@@ -114,3 +116,5 @@ draft → published → tracking → archived
 - 发布操作始终由人工完成，不自动调用平台 API
 - 数据采集通过浏览器手动查看后录入
 - OpenClaw 定时任务只负责提醒，不负责执行
+- `publishing` 负责发布记录与数据追踪，不负责内容选稿和改稿
+- 历史旧路径内容应迁移到 `60_Published/social-media/...` 后再作为正式发布输入

@@ -3,12 +3,160 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 from .config import get_settings
 
 
 settings = get_settings()
+PROJECT_ROOT = settings.project_root
+SOCIAL_MEDIA_ROOT = PROJECT_ROOT / "social-media"
+SOCIAL_CLAUDE_ROOT = SOCIAL_MEDIA_ROOT / ".claude"
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _persona_paths(persona: str, platform: str) -> tuple[Path, Path]:
+    persona_path = SOCIAL_CLAUDE_ROOT / "personas" / persona / "persona.md"
+    platform_path = SOCIAL_CLAUDE_ROOT / "personas" / persona / "platforms" / f"{platform}.md"
+    if not persona_path.exists():
+        raise FileNotFoundError(f"persona 不存在: {persona_path}")
+    if not platform_path.exists():
+        raise FileNotFoundError(f"platform 配置不存在: {platform_path}")
+    return persona_path, platform_path
+
+
+async def _run_claude(
+    *,
+    prompt: str,
+    system_prompt: str,
+    timeout_seconds: int,
+    on_event,
+    label: str,
+) -> str:
+    command = [
+        "claude",
+        "-p",
+        "--permission-mode",
+        "dontAsk",
+        "--output-format",
+        "text",
+        "--append-system-prompt",
+        system_prompt,
+        prompt,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        cwd=str(PROJECT_ROOT),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=os.environ.copy(),
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.communicate()
+        raise RuntimeError(f"{label} 超时（>{timeout_seconds}s）")
+
+    stdout_text = stdout.decode("utf-8", errors="ignore").strip()
+    stderr_text = stderr.decode("utf-8", errors="ignore").strip()
+    if stderr_text:
+        await on_event("task.output", {"stream": "stderr", "text": f"[{label}] {stderr_text}"})
+    if process.returncode != 0:
+        raise RuntimeError(f"{label} 执行失败，exit={process.returncode}")
+    if stdout_text:
+        await on_event("task.output", {"stream": "stdout", "text": f"[{label}] {stdout_text[:4000]}"})
+    return stdout_text
+
+
+def _candidate_publish_roots(persona: str, platform: str) -> list[Path]:
+    return [settings.vault_path / "60_Published" / "social-media" / persona / platform]
+
+
+def _latest_content_file(persona: str, platform: str, started_at: datetime) -> Path | None:
+    candidates: list[Path] = []
+    for root in _candidate_publish_roots(persona, platform):
+        if root.exists():
+            candidates.extend(root.glob("*/content.md"))
+    if not candidates:
+        return None
+    candidates = [path for path in candidates if datetime.fromtimestamp(path.stat().st_mtime) >= started_at]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _extract_title(body: str) -> str | None:
+    for line in body.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
+
+
+def _parse_review_result(raw: str) -> dict[str, object]:
+    text = raw.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = next((part for part in parts if "{" in part and "}" in part), text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("reviewer 未返回合法 JSON")
+    return json.loads(text[start : end + 1])
+
+
+def _writer_prompt(*, persona: str, platform: str, source: str, extra_instruction: str | None = None) -> str:
+    persona_path, platform_path = _persona_paths(persona, platform)
+    prompt = [
+        f"persona_id: {persona}",
+        f"platform: {platform}",
+        "",
+        "## 人设档案",
+        _read_text(persona_path),
+        "",
+        "## 平台规则",
+        _read_text(platform_path),
+        "",
+        "## 素材",
+        source,
+        "",
+        "## 任务",
+        "请严格按照人设和平台规则输出完整 Markdown 成稿。",
+        "只输出成稿，不要解释。",
+    ]
+    if extra_instruction:
+        prompt.extend(["", "## 修改要求", extra_instruction])
+    return "\n".join(prompt)
+
+
+def _review_prompt(*, persona: str, platform: str, draft: str) -> tuple[str, str]:
+    persona_path, platform_path = _persona_paths(persona, platform)
+    system_prompt = _read_text(SOCIAL_CLAUDE_ROOT / "agents" / "reviewer" / "reviewer.md")
+    prompt = "\n".join(
+        [
+            f"persona_id: {persona}",
+            f"platform: {platform}",
+            "",
+            "## 人设档案",
+            _read_text(persona_path),
+            "",
+            "## 平台规则",
+            _read_text(platform_path),
+            "",
+            "## 待审核稿件",
+            draft,
+            "",
+            "请输出纯 JSON，不要代码块。格式必须为：",
+            '{"total":数字,"pass":true/false,"scores":{"内容质量":数字,"人设一致性":数字,"平台适配":数字,"情感共鸣":数字,"传播潜力":数字},"feedback":"字符串或null","highlights":"字符串"}',
+            "总分 10 分，>=7 为通过。",
+        ]
+    )
+    return system_prompt, prompt
 
 
 async def run_content_task(
@@ -20,158 +168,106 @@ async def run_content_task(
     input_path: str | None,
     on_event,
 ) -> dict[str, object]:
-    await on_event("task.progress", {"message": "准备写作任务"})
     source = input_text or ""
     if input_path:
-        source_path = settings.project_root / input_path
-        if source_path.exists():
-            source = source_path.read_text(encoding="utf-8")
-    await on_event("task.output", {"stream": "system", "text": f"persona={persona} platform={platform}"})
-
-    prompt = (
-        "请基于以下素材生成社媒内容。\n\n"
-        f"目标人设: {persona}\n"
-        f"目标平台: {platform}\n\n"
-        "素材如下：\n"
-        f"{source}\n\n"
-        f"请按参数理解为 --account {persona} --platform {platform}。"
+        source_path = settings.vault_path / input_path
+        if not source_path.exists():
+            raise FileNotFoundError(f"素材文件不存在: {source_path}")
+        source = str(source_path)
+    if not source.strip():
+        raise ValueError("素材为空，无法发起写作")
+    await on_event("task.progress", {"message": "调用真实 /content-creation workflow"})
+    started_at = datetime.now()
+    slash_command = f"/content-creation {source} --account {persona} --platform {platform}"
+    debug_dir = settings.vault_path / "50_Resources" / "web-ui-debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    debug_file = debug_dir / f"content_creation_{content_id}.log"
+    command = ["claude", "-p", "--debug-file", str(debug_file), slash_command]
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        cwd=str(SOCIAL_MEDIA_ROOT),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=os.environ.copy(),
     )
-    command = ["claude", "-p", prompt]
-    env = os.environ.copy()
-    process = None
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(settings.project_root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-    except FileNotFoundError:
-        await on_event("task.output", {"stream": "stderr", "text": "claude 命令不可用，任务包装层已就绪但未执行真实生成。"})
-        fallback_body = (
-            f"# {persona} / {platform} 待生成内容\n\n"
-            f"{source.strip() or '请安装并配置 claude CLI 后重试。'}"
-        )
-        return {"title": "待生成内容", "body": fallback_body, "review_score": None}
-
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
     except asyncio.TimeoutError:
         process.kill()
         await process.communicate()
-        await on_event("task.output", {"stream": "stderr", "text": "claude 执行超时，已回退到本地测试内容。"})
-        return _fallback_content(source=source, persona=persona, platform=platform)
-    if stdout:
-        await on_event("task.output", {"stream": "stdout", "text": stdout.decode("utf-8", errors="ignore")})
-    if stderr:
-        await on_event("task.output", {"stream": "stderr", "text": stderr.decode("utf-8", errors="ignore")})
+        raise RuntimeError("真实 content-creation workflow 超时（>600s）")
+    raw = stdout.decode("utf-8", errors="ignore").strip()
+    stderr_text = stderr.decode("utf-8", errors="ignore").strip()
+    if stderr_text:
+        await on_event("task.output", {"stream": "stderr", "text": f"[content-creation] {stderr_text}"})
     if process.returncode != 0:
-        await on_event("task.output", {"stream": "stderr", "text": f"claude 执行失败，已回退到本地测试内容。exit={process.returncode}"})
-        return _fallback_content(source=source, persona=persona, platform=platform)
-
-    body = stdout.decode("utf-8", errors="ignore").strip()
-    title = _extract_title(body) or "未命名内容"
-    return {"title": title, "body": body, "review_score": None}
-
-
-async def run_revision_task(*, instruction: str, current_content: str, on_event) -> str:
-    await on_event("task.progress", {"message": "准备修改任务"})
-    command = [
-        "claude",
-        "-p",
-        f"请根据以下指令修改内容：\n指令：{instruction}\n\n当前内容：\n{current_content}",
-    ]
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(settings.project_root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
+        debug_tail = ""
+        if debug_file.exists():
+            debug_tail = debug_file.read_text(encoding="utf-8", errors="ignore")[-4000:]
+        raise RuntimeError(
+            f"真实 content-creation workflow 失败，exit={process.returncode}"
+            + (f"\nDEBUG:\n{debug_tail}" if debug_tail else "")
         )
-    except FileNotFoundError:
-        await on_event("task.output", {"stream": "stderr", "text": "claude 命令不可用，返回原始内容。"})
-        return current_content
+    if raw:
+        await on_event("task.output", {"stream": "stdout", "text": f"[content-creation] {raw[:4000]}"})
+    latest_file = _latest_content_file(persona, platform, started_at)
+    if not latest_file or not latest_file.exists():
+        raise RuntimeError("workflow 已执行，但未找到新生成的 content.md")
+    body = latest_file.read_text(encoding="utf-8")
+    title = _extract_title(body) or latest_file.parent.name.split("_", 1)[-1]
+    return {
+        "title": title,
+        "body": body,
+        "output_file": str(latest_file),
+        "review_score": None,
+        "raw": raw,
+    }
 
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.communicate()
-        await on_event("task.output", {"stream": "stderr", "text": "claude 修改超时，回退到本地改写结果。"})
-        return f"{current_content.rstrip()}\n\n> 修改指令：{instruction}\n"
-    if stdout:
-        await on_event("task.output", {"stream": "stdout", "text": stdout.decode("utf-8", errors="ignore")})
-    if stderr:
-        await on_event("task.output", {"stream": "stderr", "text": stderr.decode("utf-8", errors="ignore")})
-    if process.returncode != 0:
-        await on_event("task.output", {"stream": "stderr", "text": f"claude 修改失败，回退到本地改写结果。exit={process.returncode}"})
-        return f"{current_content.rstrip()}\n\n> 修改指令：{instruction}\n"
-    return stdout.decode("utf-8", errors="ignore").strip() or current_content
+
+async def run_revision_task(*, persona: str, platform: str, instruction: str, current_content: str, on_event) -> str:
+    writer_system = _read_text(SOCIAL_CLAUDE_ROOT / "agents" / "writer" / "writer.md")
+    await on_event("task.progress", {"message": "调用 writer 执行修改"})
+    revised = await _run_claude(
+        prompt=_writer_prompt(
+            persona=persona,
+            platform=platform,
+            source=current_content,
+            extra_instruction=instruction,
+        ),
+        system_prompt=writer_system,
+        timeout_seconds=180,
+        on_event=on_event,
+        label="writer-revise",
+    )
+    if not revised.strip():
+        raise RuntimeError("修改结果为空")
+    return revised
 
 
 async def run_selection_recommendation(*, goal: str, candidates: list[dict[str, object]], on_event) -> dict[str, object]:
-    await on_event("task.progress", {"message": "生成选稿建议"})
-    prompt = {
-        "goal": goal,
-        "candidates": candidates,
-    }
-    command = ["claude", "-p", f"请根据以下 JSON 输出推荐列表和理由，返回 JSON。\n{json.dumps(prompt, ensure_ascii=False)}"]
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(settings.project_root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
-        )
-    except FileNotFoundError:
-        return {
-            "recommendations": [
-                {"content_id": item["content_id"], "title": item["title"], "reason": "claude CLI 不可用，按最近定稿排序兜底。"}
-                for item in candidates[: min(5, len(candidates))]
-            ]
-        }
-
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.communicate()
-        return {
-            "recommendations": [
-                {"content_id": item["content_id"], "title": item["title"], "reason": "Claude 推荐超时，按最近定稿排序兜底。"}
-                for item in candidates[: min(5, len(candidates))]
-            ]
-        }
-    if stderr:
-        await on_event("task.output", {"stream": "stderr", "text": stderr.decode("utf-8", errors="ignore")})
-    if process.returncode != 0:
-        raise RuntimeError(f"claude selection task failed with exit code {process.returncode}")
-    text = stdout.decode("utf-8", errors="ignore").strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"raw": text}
-
-
-def _extract_title(body: str) -> str | None:
-    for line in body.splitlines():
-        line = line.strip()
-        if line.startswith("# "):
-            return line[2:].strip()
-    return None
-
-
-def _fallback_content(*, source: str, persona: str, platform: str) -> dict[str, object]:
-    title = "待人工确认标题"
-    body = (
-        f"# {title}\n\n"
-        f"这是 {persona} 面向 {platform} 的本地测试草稿。\n\n"
-        "## 核心观点\n"
-        f"{source.strip() or '当前未提供素材。'}\n\n"
-        "## 下一步\n"
-        "请确认 Claude CLI 配置后，再替换为真实生成内容。"
+    await on_event("task.progress", {"message": "调用 Claude 生成选稿建议"})
+    prompt = "\n".join(
+        [
+            "你是选稿编辑，请根据发布目标推荐内容。",
+            "",
+            "## 发布目标",
+            goal,
+            "",
+            "## 候选内容",
+            json.dumps(candidates, ensure_ascii=False, indent=2),
+            "",
+            "请输出纯 JSON，格式为：",
+            '{"recommendations":[{"content_id":"...","title":"...","reason":"..."}],"schedule":"可为空字符串"}',
+        ]
     )
-    return {"title": title, "body": body, "review_score": 0}
+    raw = await _run_claude(
+        prompt=prompt,
+        system_prompt="你是严格的选稿编辑，只输出 JSON。",
+        timeout_seconds=120,
+        on_event=on_event,
+        label="selection",
+    )
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"选稿结果不是合法 JSON: {exc}") from exc

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -63,6 +63,11 @@ class ReviseRequest(BaseModel):
     instruction: str
 
 
+class ContentSaveRequest(BaseModel):
+    body: str
+    title: str | None = None
+
+
 class SelectionRequest(BaseModel):
     goal: str
     persona: str | None = None
@@ -102,4 +107,4 @@ class TaskEvent(BaseModel):
     task_id: str
     content_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

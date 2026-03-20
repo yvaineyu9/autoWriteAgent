@@ -8,6 +8,8 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 ## 任务
 根据输入的主题、素材或URL，自动判断任务类型，以指定人设（默认虫小宇）生成多平台社媒内容，经独立审核达标后归档到仓库。
 
+统一约定见 [../../CONVENTIONS.md](../../CONVENTIONS.md)。
+
 ## 参数解析
 
 在处理用户输入之前，先检查是否包含以下参数：
@@ -69,10 +71,10 @@ argument-hint: "[主题/素材/URL] [--platform 小红书,公众号,twitter] [--
 ### 路径约定
 - 项目根目录：由主会话通过 `pwd` 或已知路径确定
 - 临时文件目录：`/tmp/content_creation/`
-- Writer system prompt：`social-media/.claude/agents/writer.md`（去掉 frontmatter 后使用）
-- Reviewer system prompt：`social-media/.claude/agents/reviewer.md`（去掉 frontmatter 后使用）
+- Writer agent 定义：`social-media/.claude/agents/writer/writer.md`
+- Reviewer agent 定义：`social-media/.claude/agents/reviewer/reviewer.md`
 - 人设文件：`social-media/.claude/personas/<account>/persona.md`
-- 平台风格文件：`social-media/.claude/personas/<account>/<platform>.md`
+- 平台风格文件：`social-media/.claude/personas/<account>/platforms/<platform>.md`
 
 ## 流程
 
@@ -137,7 +139,7 @@ cat /tmp/content_creation/draft_<platform>.md | \
 claude -p \
   \
   --tools "" \
-  --append-system-prompt "你是一个严格独立的内容审核员。按照以下标准逐项打分，输出纯 JSON（不要代码块标记），直接以{开头}结尾。评分维度（每项1-10分，总分60分，≥48分通过）：1.吸引力 2.信息价值 3.情绪共鸣 4.平台适配 5.行动引导 6.原创性。严格使用以下字段名：{\"total\":数字,\"pass\":true/false,\"scores\":{\"吸引力\":数字,\"信息价值\":数字,\"情绪共鸣\":数字,\"平台适配\":数字,\"行动引导\":数字,\"原创性\":数字},\"feedback\":\"修改建议或null\",\"highlights\":\"亮点\"}。不要增加任何额外字段。" \
+  --append-system-prompt "你是一个严格独立的内容审核员。输出纯 JSON，不要代码块，不要额外说明。评分维度共 5 项：内容质量、人设一致性、平台适配、情感共鸣、传播潜力。每项 0-2 分，总分 10 分，>=7 分通过。严格使用以下字段名：{\"total\":数字,\"pass\":true/false,\"scores\":{\"内容质量\":数字,\"人设一致性\":数字,\"平台适配\":数字,\"情感共鸣\":数字,\"传播潜力\":数字},\"feedback\":\"修改建议或null\",\"highlights\":\"亮点\"}。" \
   "请审核以上<平台名>平台的社媒内容" \
   2>/dev/null > /tmp/content_creation/review_<platform>.json
 ```
@@ -151,8 +153,8 @@ claude -p \
 
 ```
 读取 review_<platform>.json
-  → total ≥ 48 → 通过 → 进入归仓
-  → total < 48 → 将 feedback 追加到 writer_input，重新调用 writer
+  → total ≥ 7 → 通过 → 进入归仓
+  → total < 7 → 将 feedback 追加到 writer_input，重新调用 writer
   → 最多循环 3 轮
   → 3 轮后仍未通过 → 输出最后一版 + 审核结果，由用户决定
 ```
@@ -160,7 +162,7 @@ claude -p \
 重新调用 writer 时，在输入文件末尾追加：
 ```
 ## 修改要求（第N轮）
-上一轮审核未通过（XX/60分），请按以下意见修改：
+上一轮审核未通过（XX/10分），请按以下意见修改：
 <reviewer 的 feedback>
 
 严格按修改意见调整，直接输出修改后的完整文案。
@@ -170,7 +172,8 @@ claude -p \
 
 审核通过后，执行以下归仓操作：
 
-1. **成品归档**：每个平台的终稿归档到 `60_Published/<account>/<平台>/YYYY-MM-DD_<标题>/content.md`
+1. **成品归档**：每个平台的终稿归档到 `$VAULT_PATH/60_Published/social-media/<account>/<platform>/YYYY-MM-DD_<title>/content.md`
+   - 历史路径 `60_Published/<account>/<platform>/...` 仅作为旧数据存在，不再作为正式输出目标
    - **文件夹名必须和文章标题一致**（`YYYY-MM-DD_文章实际标题`），标题变更时文件夹名同步修改
    - 文件头部包含元信息：平台、审核分数、生成日期
    - 文件内容：正文文案、简介、hashtag
@@ -178,7 +181,7 @@ claude -p \
    - 在该项目 Progress 段追加：`- [YYYY-MM-DD] 完成社媒文案：<标题>（<平台列表>）`
    - 如果不存在对应项目，跳过此步
 3. **每日记录**：在 `10_Daily/YYYY-MM-DD.md` 追加产出记录
-   - 格式：`- 完成社媒文案：<标题>，平台：<平台列表>，审核分数 XX/60`
+   - 格式：`- 完成社媒文案：<标题>，平台：<平台列表>，审核分数 XX/10`
    - 如果当日文件不存在，基于 `99_System/templates/daily.md` 创建
 4. **清理临时文件**：`rm -rf /tmp/content_creation/`
 

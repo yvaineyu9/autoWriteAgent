@@ -4,6 +4,15 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+
+    # 从项目根目录加载 .env
+    _env_path = Path(__file__).resolve().parents[3] / ".env"
+    load_dotenv(_env_path)
+except ImportError:
+    pass
+
 
 @dataclass(frozen=True)
 class Settings:

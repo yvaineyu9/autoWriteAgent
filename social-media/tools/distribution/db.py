@@ -14,14 +14,20 @@ import os
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "~/Desktop/vault")).expanduser()
 DB_PATH = VAULT_PATH / "70_Distribution" / "distribution.db"
 
+_conn_singleton = None
+
 
 def get_conn() -> sqlite3.Connection:
-    """获取数据库连接，自动建表"""
+    """获取数据库单例连接，自动建表"""
+    global _conn_singleton
+    if _conn_singleton is not None:
+        return _conn_singleton
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     _init_schema(conn)
+    _conn_singleton = conn
     return conn
 
 
@@ -96,57 +102,95 @@ def _seed_personas(conn: sqlite3.Connection):
     conn.commit()
 
 
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    """获取当前 schema 版本号"""
+    try:
+        row = conn.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1").fetchone()
+        return row[0] if row else 0
+    except sqlite3.OperationalError:
+        return 0
+
+
 def _migrate_schema(conn: sqlite3.Connection):
     """为已有数据库添加新字段 + 修复旧约束（幂等）"""
-    existing = {r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()}
-    migrations = [
-        ("body_text",         "TEXT"),
-        ("tags",              "TEXT"),
-        ("image_paths",       "TEXT"),
-        ("cover_path",        "TEXT"),
-        ("platform_post_id",  "TEXT"),
-        ("platform_status",   "TEXT DEFAULT 'unknown'"),
-    ]
-    for col, col_type in migrations:
-        if col not in existing:
-            conn.execute(f"ALTER TABLE publications ADD COLUMN {col} {col_type}")
+    # 创建版本跟踪表
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version     INTEGER PRIMARY KEY,
+            applied_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
     conn.commit()
 
-    # 修复旧 CHECK 约束（不含 'ready' 状态的旧表）
-    schema = conn.execute("SELECT sql FROM sqlite_master WHERE name='publications'").fetchone()
-    if schema and "CHECK" in schema[0]:
-        rows = conn.execute("SELECT * FROM publications").fetchall()
-        col_names = [r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()]
-        conn.execute("PRAGMA foreign_keys = OFF")
-        conn.execute("DROP TABLE publications")
-        conn.execute("""
-            CREATE TABLE publications (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                content_path  TEXT,
-                account_id    INTEGER NOT NULL REFERENCES accounts(id),
-                title         TEXT NOT NULL,
-                body_text     TEXT,
-                tags          TEXT,
-                image_paths   TEXT,
-                cover_path    TEXT,
-                platform_post_id TEXT,
-                platform_status  TEXT DEFAULT 'unknown',
-                post_url      TEXT,
-                scheduled_at  TEXT,
-                published_at  TEXT,
-                status        TEXT NOT NULL DEFAULT 'draft',
-                created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-            )
-        """)
-        new_cols = [r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()]
-        for row in rows:
-            d = dict(zip(col_names, row))
-            vals = {c: d.get(c) for c in new_cols if c in d}
-            phs = ", ".join(["?"] * len(vals))
-            cn = ", ".join(vals.keys())
-            conn.execute(f"INSERT INTO publications ({cn}) VALUES ({phs})", list(vals.values()))
+    current_version = _get_schema_version(conn)
+
+    # Migration v1: 添加新字段
+    if current_version < 1:
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()}
+        migrations = [
+            ("body_text",         "TEXT"),
+            ("tags",              "TEXT"),
+            ("image_paths",       "TEXT"),
+            ("cover_path",        "TEXT"),
+            ("platform_post_id",  "TEXT"),
+            ("platform_status",   "TEXT DEFAULT 'unknown'"),
+        ]
+        for col, col_type in migrations:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE publications ADD COLUMN {col} {col_type}")
+        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
         conn.commit()
-        conn.execute("PRAGMA foreign_keys = ON")
+
+    # Migration v2: 移除旧 CHECK 约束
+    if current_version < 2:
+        schema = conn.execute("SELECT sql FROM sqlite_master WHERE name='publications'").fetchone()
+        if schema and schema[0] and "CHECK" in schema[0]:
+            rows = conn.execute("SELECT * FROM publications").fetchall()
+            col_names = [r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()]
+            try:
+                conn.execute("PRAGMA foreign_keys = OFF")
+                conn.execute("ALTER TABLE publications RENAME TO publications_backup")
+                conn.execute("""
+                    CREATE TABLE publications (
+                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                        content_path  TEXT,
+                        account_id    INTEGER NOT NULL REFERENCES accounts(id),
+                        title         TEXT NOT NULL,
+                        body_text     TEXT,
+                        tags          TEXT,
+                        image_paths   TEXT,
+                        cover_path    TEXT,
+                        platform_post_id TEXT,
+                        platform_status  TEXT DEFAULT 'unknown',
+                        post_url      TEXT,
+                        scheduled_at  TEXT,
+                        published_at  TEXT,
+                        status        TEXT NOT NULL DEFAULT 'draft',
+                        created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+                    )
+                """)
+                new_cols = [r[1] for r in conn.execute("PRAGMA table_info(publications)").fetchall()]
+                for row in rows:
+                    d = dict(zip(col_names, row))
+                    vals = {c: d.get(c) for c in new_cols if c in d}
+                    phs = ", ".join(["?"] * len(vals))
+                    cn = ", ".join(vals.keys())
+                    conn.execute(f"INSERT INTO publications ({cn}) VALUES ({phs})", list(vals.values()))
+                conn.execute("DROP TABLE publications_backup")
+                conn.commit()
+            except Exception:
+                # 回滚：如果新表创建失败，恢复备份表
+                try:
+                    conn.execute("DROP TABLE IF EXISTS publications")
+                    conn.execute("ALTER TABLE publications_backup RENAME TO publications")
+                    conn.commit()
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+        conn.commit()
 
 
 # ─── 便捷查询 ───

@@ -31,6 +31,17 @@ class TaskRegistry:
     def get(self, task_id: str) -> TaskRecord | None:
         return self._tasks.get(task_id)
 
+    def find_active(self, *, content_id: str | None = None, task_type: str | None = None) -> TaskRecord | None:
+        for task in self._tasks.values():
+            if task.status not in {"queued", "running"}:
+                continue
+            if content_id is not None and task.content_id != content_id:
+                continue
+            if task_type is not None and task.task_type != task_type:
+                continue
+            return task
+        return None
+
     async def emit(self, task: TaskRecord, event: str, payload: dict[str, Any] | None = None) -> None:
         envelope = {
             "event": event,

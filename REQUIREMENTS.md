@@ -1,12 +1,14 @@
 # Claude Workflows 升级需求文档
 
+> **实现状态说明**：本文档为最初的规划需求，部分内容已实现或调整。标注 ✅ 已实现、🚧 进行中、📋 计划中、❌ 已放弃。
+
 ## 一、项目定位
 
 将现有 `claude-workflows` 项目升级为 **内容管理 + 内容生产** 一体化系统，整合 OrbitOS 的知识管理能力与现有的 AI 生产线工作流。
 
-核心原则：**生产与存储分离**
-- 仓库（OrbitOS 目录）：负责所有数据的存储、归档、检索
-- 工厂（生产线目录）：负责内容生产，不存储任何数据，产出物写入仓库
+核心原则：**生产与存储分离** ✅
+- 仓库（`$VAULT_PATH`，独立于 Git）：负责所有数据的存储、归档、检索
+- 工厂（本 Git 仓库）：负责内容生产，不存储任何数据，产出物写入仓库
 
 ---
 
@@ -29,22 +31,19 @@ claude-workflows/
 ├── 99_System/                   # 系统配置（模板、Prompt 模板）
 │
 │  ═══ 工厂层（工具）═══
-├── social-media/                # 社媒生产线
+├── social-media/                # 社媒生产线 ✅
 │   └── .claude/
 │       ├── skills/              #   工作流定义
 │       └── agents/              #   执行者定义
-├── podcast/                     # 播客生产线
+├── podcast/                     # 播客生产线 ✅
 │   └── .claude/
 │       ├── skills/
 │       └── agents/
-├── data-analysis/               # 数据分析生产线（预留）
-│   └── .claude/
-│       ├── skills/
-│       └── agents/
-├── writing/                     # 写作生产线（预留）
-│   └── .claude/
-│       ├── skills/
-│       └── agents/
+├── web-ui/                      # Web UI 前端 🚧
+│   ├── backend/
+│   └── frontend/
+├── data-analysis/               # 数据分析生产线（📋 预留，未创建）
+├── writing/                     # 写作生产线（📋 预留，未创建）
 │
 │  ═══ 全局配置 ═══
 ├── .claude/
@@ -110,12 +109,13 @@ claude-workflows/
   ```
   60_Published/
   ├── social-media/
-  │   └── 2026-03-02_水逆生存指南.md
+  │   └── chongxiaoyu/xiaohongshu/2026-03-02_水逆生存指南/content.md
+  │   └── yuejian/xiaohongshu/2026-03-12_他没回消息的二十分钟/content.md
   ├── podcast/
   │   └── EP15_土星回归深度解析.md
   └── writing/
   ```
-- **规则**：由生产线 skill 自动写入，文件名格式 `日期_标题.md`
+- **规则**：社媒内容统一写入 `social-media/<persona>/<platform>/YYYY-MM-DD_<title>/content.md`
 - **谁写入**：生产线 skill（审核通过后自动归档）
 - **谁读取**：用户回顾 / OrbitOS `/archive` 清理
 
@@ -144,13 +144,13 @@ claude-workflows/
 | content-creation | 文案创作（写+审循环） | 主题/素材 | 60_Published/social-media/ |
 | video-editing | 视频剪辑方案 + 执行 | 视频文件/描述 | 60_Published/social-media/ |
 | ig-processor | IG 视频下载+关键帧提取 | URL | 50_Resources/ |
-| publishing | 发布排期管理 | 指令 | 20_Project/ |
+| publishing | 发布记录管理、状态追踪、数据采集 | 指令 | 70_Distribution/ |
 
 #### Agents（执行者）
 | Agent | 角色 | 能力 |
 |-------|------|------|
 | writer | 社媒写手 | 根据素材+平台要求生成文案 |
-| reviewer | 审核员 | 按 standards.md 独立评分审核 |
+| reviewer | 审核员 | 按统一 JSON 契约独立评分审核（总分 10 分，≥7 通过） |
 | video-editor | 剪辑师 | ffmpeg 分析+剪辑执行 |
 
 ### podcast/ 播客生产线
@@ -213,7 +213,7 @@ claude-workflows/
 
 | 产出类型 | 写入目录 | 触发条件 | 文件命名 |
 |---------|---------|---------|---------|
-| **成品终稿** | `60_Published/<生产线>/` | 审核通过 | `YYYY-MM-DD_标题.md` |
+| **社媒成品终稿** | `60_Published/social-media/<persona>/<platform>/` | 审核通过 | `YYYY-MM-DD_标题/content.md` |
 | **有价值的中间产物** | `30_Research/` 或 `50_Resources/` | skill 判断有沉淀价值 | 按内容命名 |
 | **项目状态更新** | `20_Project/对应项目.md` | 存在对应 Project 文件时 | 在 Progress 段追加记录 |
 | **每日产出记录** | `10_Daily/YYYY-MM-DD.md` | 每次生产完成 | 在当日文件追加一行 |
@@ -234,13 +234,13 @@ claude-workflows/
    writer agent → 生成初稿
        │
        ▼
-   reviewer agent → 审核（读取 standards.md）
+   reviewer agent → 审核（输出 JSON 评分结果）
        │
        ├─ 未通过 → 审核意见回 writer → 重新生成（最多3轮）
        │
        └─ 通过 ↓
               │
-写入 → 60_Published/social-media/2026-03-02_水逆生存指南.md（成品归档）
+写入 → 60_Published/social-media/<persona>/<platform>/2026-03-02_水逆生存指南/content.md（成品归档）
 写入 → 20_Project/小红书占星系列.md（追加进度，如果存在）
 写入 → 10_Daily/2026-03-02.md（追加产出记录）
 ```
@@ -296,7 +296,7 @@ Step 1：下载视频 + 提取关键帧
        ▼
    reviewer agent → 审核 → 通过
        │
-写入 → 60_Published/social-media/2026-03-02_热点话题.md
+写入 → 60_Published/social-media/<persona>/<platform>/2026-03-02_热点话题/content.md
 写入 → 10_Daily/2026-03-02.md（追加产出记录）
        （没有 Project 文件，不做状态回写）
 ```
@@ -329,7 +329,7 @@ Step 1：下载视频 + 提取关键帧
 
 ---
 
-## 七、OrbitOS 集成计划
+## 七、OrbitOS 集成计划 ✅
 
 ### 引入的 OrbitOS 功能（作为仓库层的管理 skills）
 | OrbitOS 命令 | 对应用途 | 读取 | 写入 | 适配改动 |

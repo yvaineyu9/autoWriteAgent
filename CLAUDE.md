@@ -39,7 +39,8 @@
 
 ### 2. 产出归仓规则
 每次生产完成后，必须执行以下归仓操作（写入 $VAULT_PATH）：
-- **成品终稿** → `60_Published/<生产线类型>/YYYY-MM-DD_标题.md`
+- **社媒成品终稿** → `60_Published/social-media/<persona>/<platform>/YYYY-MM-DD_标题/content.md`
+- **其他生产线成品** → `60_Published/<生产线类型>/...`
 - **有价值的中间产物** → `30_Research/` 或 `50_Resources/`
 - **临时中间产物** → 不保存
 
@@ -102,6 +103,10 @@ VAULT_PATH=~/Desktop/vault
 | `/video-editing` | 视频剪辑 |
 | `/ig-processor` | IG 视频下载处理 |
 | `/publishing` | 多账号发布管理、数据采集（基于 distribution 工具） |
+
+> `social-media` 的统一约定见 `social-media/.claude/CONVENTIONS.md`。
+> 
+> **注意**：`/content-creation` 和 `/publishing` 只在 `social-media/` 下可用。在项目根目录不提供这两个命令。
 
 ### 播客生产线（cd podcast/）
 | 命令 | 用途 |

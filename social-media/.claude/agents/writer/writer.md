@@ -49,7 +49,7 @@
 ## 参考范文
 
 写稿前建议阅读 1-2 篇该人设的已发布帖子找感觉：
-- 路径：`$VAULT_PATH/60_Published/{persona_id}/{platform}/`
+- 路径：`$VAULT_PATH/60_Published/social-media/{persona_id}/{platform}/`
 
 ## 爆款收藏策略（核心）
 
