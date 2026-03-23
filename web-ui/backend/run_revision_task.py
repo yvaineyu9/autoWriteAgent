@@ -39,13 +39,26 @@ async def main() -> int:
         raise FileNotFoundError(f"输入文件不存在: {input_file}")
     current_content = input_file.read_text(encoding="utf-8")
 
-    revised = await agent_wrapper.run_revision_task(
-        persona=args.persona,
-        platform=args.platform,
-        instruction=args.instruction,
-        current_content=current_content,
-        on_event=_emit,
-    )
+    last_error: Exception | None = None
+    revised = None
+    for attempt in range(1, 4):
+        try:
+            revised = await agent_wrapper.run_revision_task(
+                persona=args.persona,
+                platform=args.platform,
+                instruction=args.instruction,
+                current_content=current_content,
+                on_event=_emit,
+            )
+            break
+        except RuntimeError as exc:
+            last_error = exc
+            await _emit("task.retry", {"attempt": attempt, "error": str(exc)})
+            if attempt == 3:
+                raise
+            await asyncio.sleep(3 * attempt)
+    if revised is None:
+        raise RuntimeError(str(last_error or "内容修改失败"))
 
     output_path = Path(args.output_file).expanduser() if args.output_file else input_file
     output_path.parent.mkdir(parents=True, exist_ok=True)

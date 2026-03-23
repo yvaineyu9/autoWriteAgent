@@ -37,14 +37,27 @@ async def main() -> int:
     if not args.input_text and not args.input_path:
         parser.error("必须提供 --input 或 --input-path 之一")
 
-    result = await agent_wrapper.run_content_task_local(
-        persona=args.persona,
-        platform=args.platform,
-        input_text=args.input_text,
-        input_path=args.input_path,
-        instruction=args.instruction,
-        on_event=_emit,
-    )
+    last_error: Exception | None = None
+    result = None
+    for attempt in range(1, 4):
+        try:
+            result = await agent_wrapper.run_content_task_local(
+                persona=args.persona,
+                platform=args.platform,
+                input_text=args.input_text,
+                input_path=args.input_path,
+                instruction=args.instruction,
+                on_event=_emit,
+            )
+            break
+        except RuntimeError as exc:
+            last_error = exc
+            await _emit("task.retry", {"attempt": attempt, "error": str(exc)})
+            if attempt == 3:
+                raise
+            await asyncio.sleep(3 * attempt)
+    if result is None:
+        raise RuntimeError(str(last_error or "内容生成失败"))
 
     body = str(result["body"]).strip() + "\n"
     if args.output_file:
