@@ -224,6 +224,57 @@ async def run_content_task(
     }
 
 
+async def run_content_task_local(
+    *,
+    persona: str,
+    platform: str,
+    input_text: str | None,
+    input_path: str | None,
+    instruction: str | None,
+    on_event,
+) -> dict[str, object]:
+    source = input_text or ""
+    source_label = input_path
+    if input_path:
+        path_value = Path(input_path)
+        source_path = path_value if path_value.is_absolute() else settings.vault_path / path_value
+        if not source_path.exists():
+            raise FileNotFoundError(f"素材文件不存在: {source_path}")
+        source = source_path.read_text(encoding="utf-8")
+        source_label = str(source_path)
+    if not source.strip():
+        raise ValueError("素材为空，无法发起写作")
+
+    extra_instruction = instruction or (
+        "请把这份素材扩写或改写成一篇完整成稿。"
+        "严格遵守当前人设和平台规则。"
+        "只输出最终 Markdown 成稿，不要解释。"
+    )
+    writer_system = _read_text(SOCIAL_CLAUDE_ROOT / "agents" / "writer" / "writer.md")
+    await on_event("task.progress", {"message": "调用本地 writer 路径生成内容"})
+    body = await _run_claude(
+        prompt=_writer_prompt(
+            persona=persona,
+            platform=platform,
+            source=source,
+            extra_instruction=extra_instruction,
+        ),
+        system_prompt=writer_system,
+        timeout_seconds=240,
+        on_event=on_event,
+        label="writer-local-draft",
+    )
+    title = _extract_title(body) or "未命名"
+    return {
+        "title": title,
+        "body": body,
+        "output_file": None,
+        "review_score": None,
+        "raw": None,
+        "source_label": source_label,
+    }
+
+
 async def run_revision_task(*, persona: str, platform: str, instruction: str, current_content: str, on_event) -> str:
     writer_system = _read_text(SOCIAL_CLAUDE_ROOT / "agents" / "writer" / "writer.md")
     await on_event("task.progress", {"message": "调用 writer 执行修改"})
