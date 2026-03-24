@@ -46,17 +46,20 @@ async def _run_claude(
         "text",
         "--append-system-prompt",
         system_prompt,
-        prompt,
     ]
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=str(PROJECT_ROOT),
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=os.environ.copy(),
     )
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(prompt.encode("utf-8")),
+            timeout=timeout_seconds,
+        )
     except asyncio.TimeoutError:
         process.kill()
         await process.communicate()
