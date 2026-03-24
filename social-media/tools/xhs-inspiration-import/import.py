@@ -35,6 +35,8 @@ class NoteRecord:
     shares: int | None
     publish_time: str | None
     comments_excerpt: list[str]
+    image_ocr: list[str]
+    ocr_status: str | None
     raw: dict[str, Any]
 
 
@@ -105,6 +107,21 @@ def _extract_comments(raw: dict[str, Any]) -> list[str]:
     return excerpts
 
 
+def _extract_image_ocr(raw: dict[str, Any]) -> list[str]:
+    image_ocr = _pick(raw, "image_ocr", "ocr", "ocr_text", "images_text")
+    excerpts: list[str] = []
+    for item in _as_list(image_ocr):
+        if isinstance(item, dict):
+            label = _pick(item, "label", "name", "title")
+            text = _pick(item, "text", "content", "ocr")
+            if text:
+                prefix = f"{label}: " if label else ""
+                excerpts.append(f"{prefix}{str(text).strip()}")
+        elif item:
+            excerpts.append(str(item).strip())
+    return excerpts
+
+
 def _extract_content(raw: dict[str, Any]) -> str:
     blocks = [
         _pick(raw, "desc", "content", "note_content", "noteContent", "text"),
@@ -129,6 +146,8 @@ def _extract_note(record: dict[str, Any]) -> NoteRecord:
         shares=_as_int(_pick(record, "share_count", "shares")),
         publish_time=_pick(record, "time", "publish_time", "publishTime", "create_time", "createTime"),
         comments_excerpt=_extract_comments(record),
+        image_ocr=_extract_image_ocr(record),
+        ocr_status=_pick(raw=record, *("ocr_status", "ocrStatus")),
         raw=record,
     )
 
@@ -244,10 +263,16 @@ def _render_body(note: NoteRecord) -> str:
         lines.append(f"- 发布时间：{note.publish_time}")
     if note.source_url:
         lines.extend(["", "# 原文链接", note.source_url])
+    if note.image_ocr:
+        lines.extend(["", "# 图片文字（OCR）"])
+        for item in note.image_ocr:
+            lines.append(f"- {item}")
     if note.comments_excerpt:
         lines.extend(["", "# 评论摘录"])
         for item in note.comments_excerpt:
             lines.append(f"- {item}")
+    if note.ocr_status:
+        lines.extend(["", "# 采集备注", f"- OCR 状态：{note.ocr_status}"])
     lines.extend(
         [
             "",
