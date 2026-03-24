@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +14,64 @@ settings = get_settings()
 PROJECT_ROOT = settings.project_root
 SOCIAL_MEDIA_ROOT = PROJECT_ROOT / "social-media"
 SOCIAL_CLAUDE_ROOT = SOCIAL_MEDIA_ROOT / ".claude"
+LOCAL_PERSONA_BRIEFS: dict[tuple[str, str], str] = {
+    (
+        "yuejian",
+        "xiaohongshu",
+    ): """
+月见：关系心理学 × 文艺情感写作。
+- 核心：先讲清关系心理，再用占⭐️/合⭐️盘/星宿关系做辅助翻译，不写成玄学号。
+- 受众：18-26 岁、在关系里迷茫但想清醒的年轻女性。
+- 语气：温柔、克制、画面感先行，共情但不沉溺，像深夜低声说话。
+- 表达：用“你”直接带入；先给真实场景，再解释心理机制；短句有节奏，但不装腔。
+- 禁止：说教、PUA 话术、互联网黑话、鸡汤、恐吓、过度网络梗、中英文混用。
+- 结尾：留白式收束，不硬讲道理；签名用“我是月见，…… 🌙”且每篇不同。
+- 软引导：可自然提到“如果你想更清楚看到自己的关系模式，我可以陪你一起看”；也可轻提除了星宿关系，还能结合星座、合⭐️盘一起看。
+""".strip()
+}
+LOCAL_PLATFORM_BRIEFS: dict[tuple[str, str], str] = {
+    (
+        "yuejian",
+        "xiaohongshu",
+    ): """
+小红书成稿规则：
+- 输出完整 Markdown 成稿，不解释。
+- 标题放最前，25 字内，要有信息承诺，不要纯情绪空话。
+- 正文用 2-4 个 `##` 分段，每段一个清晰观点。
+- 开头直接切痛点，3-5 行内进入正题，不要空洞铺陈。
+- 必须至少有 1 个可收藏框架段：3个信号 / 自检清单 / 对比分类。
+- 行文短句分行，每 2-4 行留一个空行，适合卡片排版。
+- 中段或结尾前埋 1 个自然互动钩子。
+- 结尾要干脆，不要祝福体、说教体、万能金句。
+- 签名单独一行，以“我是月见，…… 🌙”收尾。
+- 如需简介区，用 `---简介---` 后补一段口语化搜索描述和 3-6 个标签。
+- 如果当前任务是短文、单段、标题或局部改写，不必强行套完整长文结构。
+- 审核敏感词必须打断：占⭐️、星⭐️盘、合⭐️盘、能⭐️量、运⭐️等。
+- 禁止高风险表达：让我们一起探索、首先其次最后、你需要明白的是、说白了就是、别骗自己了。
+""".strip()
+}
+LOCAL_WRITER_SYSTEM_PROMPT = """
+你是本项目的本地社媒写手 fallback。
+
+执行边界：
+- 只依据当前消息里提供的人设、平台规则、素材和修改要求工作。
+- 不要尝试读取文件、搜索知识库、调用工具、引用外部上下文。
+- 如果修改要求和默认平台长文规则冲突，优先服从修改要求。
+
+输出要求：
+- 只输出最终结果，不要解释、不要分析、不要加前后说明。
+- 若要求输出 Markdown，就直接输出最终 Markdown。
+""".strip()
+LOCAL_REVIEWER_SYSTEM_PROMPT = """
+你是本项目的本地审核 fallback。
+
+执行边界：
+- 只依据当前消息里提供的人设、平台规则和待审核稿件评分。
+- 不要尝试读取文件、调用工具或引用外部上下文。
+
+输出要求：
+- 只输出合法 JSON，不要代码块，不要解释。
+""".strip()
 
 
 def _read_text(path: Path) -> str:
@@ -29,6 +88,64 @@ def _persona_paths(persona: str, platform: str) -> tuple[Path, Path]:
     return persona_path, platform_path
 
 
+def _compact_markdown(text: str, *, skip_heading_keywords: tuple[str, ...] = ()) -> str:
+    lines = text.splitlines()
+    kept: list[str] = []
+    in_code_block = False
+    skip_section = False
+    heading_pattern = re.compile(r"^#{1,6}\s+")
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if stripped.startswith(">"):
+            continue
+        if stripped.startswith("|") or stripped.startswith("![]("):
+            continue
+
+        if heading_pattern.match(stripped):
+            skip_section = any(keyword in stripped for keyword in skip_heading_keywords)
+            if skip_section:
+                continue
+            kept.append(stripped)
+            continue
+
+        if skip_section:
+            continue
+        if not stripped:
+            if kept and kept[-1] != "":
+                kept.append("")
+            continue
+        kept.append(stripped)
+
+    compacted = "\n".join(kept)
+    compacted = re.sub(r"\n{3,}", "\n\n", compacted)
+    return compacted.strip()
+
+
+def _persona_brief(persona: str, platform: str, persona_path: Path) -> str:
+    brief = LOCAL_PERSONA_BRIEFS.get((persona, platform))
+    if brief:
+        return brief
+    return _compact_markdown(_read_text(persona_path))
+
+
+def _platform_brief(persona: str, platform: str, platform_path: Path) -> str:
+    brief = LOCAL_PLATFORM_BRIEFS.get((persona, platform))
+    if brief:
+        return brief
+    return _compact_markdown(
+        _read_text(platform_path),
+        skip_heading_keywords=("帖子文件结构", "排版工具适配规范", "示例对比"),
+    )
+
+
 async def _run_claude(
     *,
     prompt: str,
@@ -37,6 +154,10 @@ async def _run_claude(
     on_event,
     label: str,
 ) -> str:
+    prompt = prompt.strip()
+    if not prompt:
+        raise RuntimeError(f"{label} prompt 为空")
+    full_prompt = f"{system_prompt.strip()}\n\n{prompt}" if system_prompt.strip() else prompt
     command = [
         "claude",
         "-p",
@@ -44,8 +165,6 @@ async def _run_claude(
         "dontAsk",
         "--output-format",
         "text",
-        "--append-system-prompt",
-        system_prompt,
     ]
     process = await asyncio.create_subprocess_exec(
         *command,
@@ -55,22 +174,38 @@ async def _run_claude(
         stderr=asyncio.subprocess.PIPE,
         env=os.environ.copy(),
     )
+    communicate_task = asyncio.create_task(process.communicate(full_prompt.encode("utf-8")))
+    elapsed_seconds = 0
     try:
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(prompt.encode("utf-8")),
-            timeout=timeout_seconds,
-        )
-    except asyncio.TimeoutError:
+        while True:
+            try:
+                stdout, stderr = await asyncio.wait_for(asyncio.shield(communicate_task), timeout=15)
+                break
+            except asyncio.TimeoutError:
+                elapsed_seconds += 15
+                if elapsed_seconds >= timeout_seconds:
+                    process.kill()
+                    await process.communicate()
+                    raise RuntimeError(f"{label} 超时（>{timeout_seconds}s）")
+                await on_event("task.progress", {"message": f"{label} 仍在运行（{elapsed_seconds}s）"})
+    except RuntimeError:
+        if not communicate_task.done():
+            communicate_task.cancel()
+        raise
+    except Exception:
         process.kill()
         await process.communicate()
-        raise RuntimeError(f"{label} 超时（>{timeout_seconds}s）")
+        if not communicate_task.done():
+            communicate_task.cancel()
+        raise
 
     stdout_text = stdout.decode("utf-8", errors="ignore").strip()
     stderr_text = stderr.decode("utf-8", errors="ignore").strip()
     if stderr_text:
         await on_event("task.output", {"stream": "stderr", "text": f"[{label}] {stderr_text}"})
     if process.returncode != 0:
-        raise RuntimeError(f"{label} 执行失败，exit={process.returncode}")
+        detail = f"\nSTDERR:\n{stderr_text[-2000:]}" if stderr_text else ""
+        raise RuntimeError(f"{label} 执行失败，exit={process.returncode}{detail}")
     if stdout_text:
         await on_event("task.output", {"stream": "stdout", "text": f"[{label}] {stdout_text[:4000]}"})
     return stdout_text
@@ -115,21 +250,31 @@ def _parse_review_result(raw: str) -> dict[str, object]:
 
 def _writer_prompt(*, persona: str, platform: str, source: str, extra_instruction: str | None = None) -> str:
     persona_path, platform_path = _persona_paths(persona, platform)
+    persona_text = _persona_brief(persona, platform, persona_path)
+    platform_text = _platform_brief(persona, platform, platform_path)
+    task_line = "请严格按照人设和平台规则输出最终结果。"
+    if extra_instruction:
+        task_line = "优先执行修改要求；如果修改要求只要短文、标题、简介或局部改写，不必强行输出完整长文结构。"
     prompt = [
         f"persona_id: {persona}",
         f"platform: {platform}",
         "",
+        "## 执行边界",
+        "你现在已经拿到了写作所需的全部信息。",
+        "不要再尝试读取文件、搜索知识库或参考其他帖子。",
+        "只基于下面提供的人设、平台规则、素材和修改要求完成输出。",
+        "",
         "## 人设档案",
-        _read_text(persona_path),
+        persona_text,
         "",
         "## 平台规则",
-        _read_text(platform_path),
+        platform_text,
         "",
         "## 素材",
         source,
         "",
         "## 任务",
-        "请严格按照人设和平台规则输出完整 Markdown 成稿。",
+        task_line,
         "只输出成稿，不要解释。",
     ]
     if extra_instruction:
@@ -139,17 +284,22 @@ def _writer_prompt(*, persona: str, platform: str, source: str, extra_instructio
 
 def _review_prompt(*, persona: str, platform: str, draft: str) -> tuple[str, str]:
     persona_path, platform_path = _persona_paths(persona, platform)
-    system_prompt = _read_text(SOCIAL_CLAUDE_ROOT / "agents" / "reviewer" / "reviewer.md")
+    persona_text = _persona_brief(persona, platform, persona_path)
+    platform_text = _platform_brief(persona, platform, platform_path)
     prompt = "\n".join(
         [
             f"persona_id: {persona}",
             f"platform: {platform}",
             "",
+            "## 执行边界",
+            "你现在已经拿到了审核所需的全部信息。",
+            "不要再尝试读取文件或调用工具。",
+            "",
             "## 人设档案",
-            _read_text(persona_path),
+            persona_text,
             "",
             "## 平台规则",
-            _read_text(platform_path),
+            platform_text,
             "",
             "## 待审核稿件",
             draft,
@@ -159,7 +309,7 @@ def _review_prompt(*, persona: str, platform: str, draft: str) -> tuple[str, str
             "总分 10 分，>=7 为通过。",
         ]
     )
-    return system_prompt, prompt
+    return LOCAL_REVIEWER_SYSTEM_PROMPT, prompt
 
 
 async def run_content_task(
@@ -253,7 +403,6 @@ async def run_content_task_local(
         "严格遵守当前人设和平台规则。"
         "只输出最终 Markdown 成稿，不要解释。"
     )
-    writer_system = _read_text(SOCIAL_CLAUDE_ROOT / "agents" / "writer" / "writer.md")
     await on_event("task.progress", {"message": "调用本地 writer 路径生成内容"})
     body = await _run_claude(
         prompt=_writer_prompt(
@@ -262,7 +411,7 @@ async def run_content_task_local(
             source=source,
             extra_instruction=extra_instruction,
         ),
-        system_prompt=writer_system,
+        system_prompt=LOCAL_WRITER_SYSTEM_PROMPT,
         timeout_seconds=240,
         on_event=on_event,
         label="writer-local-draft",
@@ -279,7 +428,6 @@ async def run_content_task_local(
 
 
 async def run_revision_task(*, persona: str, platform: str, instruction: str, current_content: str, on_event) -> str:
-    writer_system = _read_text(SOCIAL_CLAUDE_ROOT / "agents" / "writer" / "writer.md")
     await on_event("task.progress", {"message": "调用 writer 执行修改"})
     revised = await _run_claude(
         prompt=_writer_prompt(
@@ -288,7 +436,7 @@ async def run_revision_task(*, persona: str, platform: str, instruction: str, cu
             source=current_content,
             extra_instruction=instruction,
         ),
-        system_prompt=writer_system,
+        system_prompt=LOCAL_WRITER_SYSTEM_PROMPT,
         timeout_seconds=180,
         on_event=on_event,
         label="writer-revise",
