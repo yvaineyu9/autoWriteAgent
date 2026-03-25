@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import re
+import shlex
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -14,19 +16,13 @@ settings = get_settings()
 PROJECT_ROOT = settings.project_root
 SOCIAL_MEDIA_ROOT = PROJECT_ROOT / "social-media"
 SOCIAL_CLAUDE_ROOT = SOCIAL_MEDIA_ROOT / ".claude"
+CLAUDE_FALLBACK_CWD = Path.home()
 LOCAL_PERSONA_BRIEFS: dict[tuple[str, str], str] = {
     (
         "yuejian",
         "xiaohongshu",
     ): """
-月见：关系心理学 × 文艺情感写作。
-- 核心：先讲清关系心理，再用占⭐️/合⭐️盘/星宿关系做辅助翻译，不写成玄学号。
-- 受众：18-26 岁、在关系里迷茫但想清醒的年轻女性。
-- 语气：温柔、克制、画面感先行，共情但不沉溺，像深夜低声说话。
-- 表达：用“你”直接带入；先给真实场景，再解释心理机制；短句有节奏，但不装腔。
-- 禁止：说教、PUA 话术、互联网黑话、鸡汤、恐吓、过度网络梗、中英文混用。
-- 结尾：留白式收束，不硬讲道理；签名用“我是月见，…… 🌙”且每篇不同。
-- 软引导：可自然提到“如果你想更清楚看到自己的关系模式，我可以陪你一起看”；也可轻提除了星宿关系，还能结合星座、合⭐️盘一起看。
+月见是写关系心理学与文艺情感内容的小红书作者，面向在关系里迷茫但想清醒的年轻女性。语气温柔克制、有画面感、共情但不说教；先讲清关系心理，再把星宿关系、星座、合⭐️盘当辅助翻译，不写成玄学号。禁止鸡汤、PUA、互联网黑话、恐吓和过度网络梗；结尾自然留白，签名用“我是月见，…… 🌙”。
 """.strip()
 }
 LOCAL_PLATFORM_BRIEFS: dict[tuple[str, str], str] = {
@@ -34,44 +30,11 @@ LOCAL_PLATFORM_BRIEFS: dict[tuple[str, str], str] = {
         "yuejian",
         "xiaohongshu",
     ): """
-小红书成稿规则：
-- 输出完整 Markdown 成稿，不解释。
-- 标题放最前，25 字内，要有信息承诺，不要纯情绪空话。
-- 正文用 2-4 个 `##` 分段，每段一个清晰观点。
-- 开头直接切痛点，3-5 行内进入正题，不要空洞铺陈。
-- 必须至少有 1 个可收藏框架段：3个信号 / 自检清单 / 对比分类。
-- 行文短句分行，每 2-4 行留一个空行，适合卡片排版。
-- 中段或结尾前埋 1 个自然互动钩子。
-- 结尾要干脆，不要祝福体、说教体、万能金句。
-- 签名单独一行，以“我是月见，…… 🌙”收尾。
-- 如需简介区，用 `---简介---` 后补一段口语化搜索描述和 3-6 个标签。
-- 如果当前任务是短文、单段、标题或局部改写，不必强行套完整长文结构。
-- 审核敏感词必须打断：占⭐️、星⭐️盘、合⭐️盘、能⭐️量、运⭐️等。
-- 禁止高风险表达：让我们一起探索、首先其次最后、你需要明白的是、说白了就是、别骗自己了。
+小红书成稿用 Markdown 输出。标题要有信息承诺；正文通常用 2-4 个 `##` 分段，开头 3-5 行内切进痛点，至少带 1 个可收藏框架段和 1 个自然互动钩子；短句分行，结尾干脆。需要写简介时再加 `---简介---` 和 3-6 个标签。审核敏感词必须打断成占⭐️、星⭐️盘、合⭐️盘、能⭐️量、运⭐️等；不要出现“说白了就是”“你需要明白的是”这类重 AI 味表达。
 """.strip()
 }
-LOCAL_WRITER_SYSTEM_PROMPT = """
-你是本项目的本地社媒写手 fallback。
-
-执行边界：
-- 只依据当前消息里提供的人设、平台规则、素材和修改要求工作。
-- 不要尝试读取文件、搜索知识库、调用工具、引用外部上下文。
-- 如果修改要求和默认平台长文规则冲突，优先服从修改要求。
-
-输出要求：
-- 只输出最终结果，不要解释、不要分析、不要加前后说明。
-- 若要求输出 Markdown，就直接输出最终 Markdown。
-""".strip()
-LOCAL_REVIEWER_SYSTEM_PROMPT = """
-你是本项目的本地审核 fallback。
-
-执行边界：
-- 只依据当前消息里提供的人设、平台规则和待审核稿件评分。
-- 不要尝试读取文件、调用工具或引用外部上下文。
-
-输出要求：
-- 只输出合法 JSON，不要代码块，不要解释。
-""".strip()
+LOCAL_WRITER_SYSTEM_PROMPT = ""
+LOCAL_REVIEWER_SYSTEM_PROMPT = ""
 
 
 def _read_text(path: Path) -> str:
@@ -158,54 +121,52 @@ async def _run_claude(
     if not prompt:
         raise RuntimeError(f"{label} prompt 为空")
     full_prompt = f"{system_prompt.strip()}\n\n{prompt}" if system_prompt.strip() else prompt
-    command = [
-        "claude",
-        "-p",
-        "--permission-mode",
-        "dontAsk",
-        "--output-format",
-        "text",
-    ]
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        cwd=str(PROJECT_ROOT),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=os.environ.copy(),
+    quoted_prompt = shlex.quote(full_prompt)
+    command = f"printf %s {quoted_prompt} | claude -p --permission-mode dontAsk --output-format text"
+    result_task = asyncio.create_task(
+        asyncio.to_thread(
+            subprocess.run,
+            command,
+            cwd=str(CLAUDE_FALLBACK_CWD),
+            env=os.environ.copy(),
+            shell=True,
+            executable="/bin/zsh",
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
     )
-    communicate_task = asyncio.create_task(process.communicate(full_prompt.encode("utf-8")))
     elapsed_seconds = 0
     try:
         while True:
             try:
-                stdout, stderr = await asyncio.wait_for(asyncio.shield(communicate_task), timeout=15)
+                completed = await asyncio.wait_for(asyncio.shield(result_task), timeout=15)
                 break
             except asyncio.TimeoutError:
                 elapsed_seconds += 15
                 if elapsed_seconds >= timeout_seconds:
-                    process.kill()
-                    await process.communicate()
                     raise RuntimeError(f"{label} 超时（>{timeout_seconds}s）")
                 await on_event("task.progress", {"message": f"{label} 仍在运行（{elapsed_seconds}s）"})
     except RuntimeError:
-        if not communicate_task.done():
-            communicate_task.cancel()
+        if not result_task.done():
+            result_task.cancel()
         raise
+    except subprocess.TimeoutExpired:
+        if not result_task.done():
+            result_task.cancel()
+        raise RuntimeError(f"{label} 超时（>{timeout_seconds}s）")
     except Exception:
-        process.kill()
-        await process.communicate()
-        if not communicate_task.done():
-            communicate_task.cancel()
+        if not result_task.done():
+            result_task.cancel()
         raise
 
-    stdout_text = stdout.decode("utf-8", errors="ignore").strip()
-    stderr_text = stderr.decode("utf-8", errors="ignore").strip()
+    stdout_text = completed.stdout.strip()
+    stderr_text = completed.stderr.strip()
     if stderr_text:
         await on_event("task.output", {"stream": "stderr", "text": f"[{label}] {stderr_text}"})
-    if process.returncode != 0:
+    if completed.returncode != 0:
         detail = f"\nSTDERR:\n{stderr_text[-2000:]}" if stderr_text else ""
-        raise RuntimeError(f"{label} 执行失败，exit={process.returncode}{detail}")
+        raise RuntimeError(f"{label} 执行失败，exit={completed.returncode}{detail}")
     if stdout_text:
         await on_event("task.output", {"stream": "stdout", "text": f"[{label}] {stdout_text[:4000]}"})
     return stdout_text
@@ -249,65 +210,60 @@ def _parse_review_result(raw: str) -> dict[str, object]:
 
 
 def _writer_prompt(*, persona: str, platform: str, source: str, extra_instruction: str | None = None) -> str:
+    source_text = source.strip()
+    instruction_text = extra_instruction.strip() if extra_instruction else "按以上要求输出最终成稿。"
+    if (persona, platform) == ("yuejian", "xiaohongshu"):
+        return (
+            "你是月见，一个写关系心理学与文艺情感内容的小红书作者，"
+            "语气温柔克制，有画面感，共情但不说教，不用鸡汤、PUA话术、互联网黑话和恐吓表达。"
+            "你会先讲清关系心理，再自然结合星宿关系、星座、合⭐️盘做辅助翻译，但不要写成玄学号。"
+            "标题要有信息承诺，正文适合小红书卡片阅读，短句分行；需要时带 2-4 个 `##` 分段、可收藏框架段、自然互动钩子，结尾用“我是月见，…… 🌙”收束。"
+            "审核敏感词必须打断成占⭐️、星⭐️盘、合⭐️盘、能⭐️量、运⭐️等。"
+            f"请根据这条素材完成任务：{source_text}。"
+            f"具体要求：{instruction_text}"
+            "只输出最终结果，不要解释。"
+        )
     persona_path, platform_path = _persona_paths(persona, platform)
     persona_text = _persona_brief(persona, platform, persona_path)
     platform_text = _platform_brief(persona, platform, platform_path)
-    task_line = "请严格按照人设和平台规则输出最终结果。"
-    if extra_instruction:
-        task_line = "优先执行修改要求；如果修改要求只要短文、标题、简介或局部改写，不必强行输出完整长文结构。"
-    prompt = [
-        f"persona_id: {persona}",
-        f"platform: {platform}",
-        "",
-        "## 执行边界",
-        "你现在已经拿到了写作所需的全部信息。",
-        "不要再尝试读取文件、搜索知识库或参考其他帖子。",
-        "只基于下面提供的人设、平台规则、素材和修改要求完成输出。",
-        "",
-        "## 人设档案",
-        persona_text,
-        "",
-        "## 平台规则",
-        platform_text,
-        "",
-        "## 素材",
-        source,
-        "",
-        "## 任务",
-        task_line,
-        "只输出成稿，不要解释。",
-    ]
-    if extra_instruction:
-        prompt.extend(["", "## 修改要求", extra_instruction])
-    return "\n".join(prompt)
+    return (
+        f"你现在为 persona `{persona}` 在平台 `{platform}` 写稿。"
+        "只根据当前消息完成任务，不要读取文件、不要调用工具、不要引用外部上下文。"
+        f"人设要求：{persona_text}。"
+        f"平台要求：{platform_text}。"
+        f"素材：{source_text}。"
+        f"任务：{instruction_text}"
+        "优先执行任务要求；如果它只要求短文、标题、简介或局部改写，不必强行输出完整长文结构。"
+        "只输出最终结果，不要解释。"
+    )
 
 
 def _review_prompt(*, persona: str, platform: str, draft: str) -> tuple[str, str]:
+    draft_text = draft.strip()
+    if (persona, platform) == ("yuejian", "xiaohongshu"):
+        prompt = (
+            "你是内容审核官，请审核这篇月见风格的小红书稿件。"
+            "评分只根据当前消息，不要读取文件、不要调用工具、不要引用外部上下文。"
+            "重点看 5 个维度：内容质量、人设一致性、平台适配、情感共鸣、传播潜力。"
+            "月见风格要温柔克制、有画面感、共情但不说教；小红书稿要有信息承诺、适合卡片排版，并避开重 AI 味和违规词。"
+            f"待审核稿件：{draft_text}。"
+            "请输出纯 JSON，不要代码块。格式必须为："
+            '{"total":数字,"pass":true/false,"scores":{"内容质量":数字,"人设一致性":数字,"平台适配":数字,"情感共鸣":数字,"传播潜力":数字},"feedback":"字符串或null","highlights":"字符串"}'
+            "总分 10 分，>=7 为通过。"
+        )
+        return LOCAL_REVIEWER_SYSTEM_PROMPT, prompt
     persona_path, platform_path = _persona_paths(persona, platform)
     persona_text = _persona_brief(persona, platform, persona_path)
     platform_text = _platform_brief(persona, platform, platform_path)
-    prompt = "\n".join(
-        [
-            f"persona_id: {persona}",
-            f"platform: {platform}",
-            "",
-            "## 执行边界",
-            "你现在已经拿到了审核所需的全部信息。",
-            "不要再尝试读取文件或调用工具。",
-            "",
-            "## 人设档案",
-            persona_text,
-            "",
-            "## 平台规则",
-            platform_text,
-            "",
-            "## 待审核稿件",
-            draft,
-            "",
-            "请输出纯 JSON，不要代码块。格式必须为：",
-            '{"total":数字,"pass":true/false,"scores":{"内容质量":数字,"人设一致性":数字,"平台适配":数字,"情感共鸣":数字,"传播潜力":数字},"feedback":"字符串或null","highlights":"字符串"}',
-            "总分 10 分，>=7 为通过。",
-        ]
+    prompt = (
+        f"请审核 persona `{persona}` 在平台 `{platform}` 的稿件。"
+        "只根据当前消息评分，不要读取文件、不要调用工具、不要引用外部上下文。"
+        f"人设要求：{persona_text}。"
+        f"平台要求：{platform_text}。"
+        f"待审核稿件：{draft_text}。"
+        "请输出纯 JSON，不要代码块。格式必须为："
+        '{"total":数字,"pass":true/false,"scores":{"内容质量":数字,"人设一致性":数字,"平台适配":数字,"情感共鸣":数字,"传播潜力":数字},"feedback":"字符串或null","highlights":"字符串"}'
+        "总分 10 分，>=7 为通过。"
     )
     return LOCAL_REVIEWER_SYSTEM_PROMPT, prompt
 
