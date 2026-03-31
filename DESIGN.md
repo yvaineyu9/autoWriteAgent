@@ -236,12 +236,12 @@ autoWriteAgent/
 │
 ├── CLAUDE.md                              # L0 全局索引
 │
-├── skills/                                # L1 命令定义
-│   ├── create.md                          #   /create — 内容创作
-│   ├── collect.md                         #   /collect — 灵感采集
-│   ├── select.md                          #   /select — 选文推荐
-│   ├── publish.md                         #   /publish — 发布管理
-│   └── daily.md                           #   /daily — 每日规划
+├── .claude/skills/                        # L1 命令定义（Claude Code 斜杠命令）
+│   ├── create/SKILL.md                    #   /create — 内容创作
+│   ├── collect/SKILL.md                   #   /collect — 灵感采集
+│   ├── select/SKILL.md                    #   /select — 选文推荐
+│   ├── publish/SKILL.md                   #   /publish — 发布管理
+│   └── daily/SKILL.md                     #   /daily — 每日规划
 │
 ├── agents/                                # L3 Agent 定义
 │   ├── writer.md                          #   写手
