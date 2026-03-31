@@ -19,19 +19,23 @@ DATA_CONTENT_DIR = os.path.join(PROJECT_ROOT, "data", "content")
 
 
 def _to_slug(title: str, max_len: int = 30) -> str:
-    """将标题转为 ASCII slug。优先尝试 pypinyin，fallback 用 unicodedata 转换。"""
+    """将标题转为 ASCII slug。优先尝试 pypinyin，fallback 用 hashlib。"""
     try:
         from pypinyin import lazy_pinyin
-        raw = "".join(lazy_pinyin(title))
+        raw = "-".join(lazy_pinyin(title))
     except ImportError:
-        # fallback: 去掉非 ASCII 后用下划线连接
-        nfkd = unicodedata.normalize("NFKD", title)
-        raw = "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
-        raw = re.sub(r"[^\w\s-]", "", raw)
+        # fallback: 提取英文字母和数字部分
+        alpha_num = re.sub(r"[^a-zA-Z0-9]", " ", title).strip()
+        alpha_num = re.sub(r"\s+", "-", alpha_num)
+        if len(alpha_num) >= 3:
+            raw = alpha_num
+        else:
+            # 纯中文或太短，用 hash
+            import hashlib
+            raw = hashlib.md5(title.encode()).hexdigest()[:12]
 
-    slug = re.sub(r"[\s_-]+", "_", raw).strip("_").lower()
-    # 只保留 ascii 字母数字和下划线
-    slug = re.sub(r"[^a-z0-9_]", "", slug)
+    slug = re.sub(r"[\s_-]+", "-", raw).strip("-").lower()
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
     return slug[:max_len] if slug else "untitled"
 
 
