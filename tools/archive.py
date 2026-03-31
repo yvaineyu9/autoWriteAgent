@@ -118,12 +118,15 @@ def main():
         dest_file = os.path.join(dest_dir, "content.md")
         shutil.copy2(args.file, dest_file)
 
+        # 数据库存相对路径（相对于 data/content/）
+        rel_path = f"{content_id}/content.md"
+
         if existing:
             # 更新
             conn.execute(
                 """UPDATE contents SET file_path=?, review_json=?, review_score=?,
                    updated_at=datetime('now','localtime') WHERE content_id=?""",
-                (dest_file, review_json_str, review_score, content_id),
+                (rel_path, review_json_str, review_score, content_id),
             )
             conn.commit()
             print(f"已更新已有记录: {content_id}", file=sys.stderr)
@@ -136,7 +139,7 @@ def main():
                    VALUES (?, ?, ?, ?, 'final', ?, ?, ?, ?)""",
                 (
                     content_id, args.title, args.persona, args.platform,
-                    dest_file, review_score, review_json_str, args.source_idea,
+                    rel_path, review_score, review_json_str, args.source_idea,
                 ),
             )
             conn.execute(
@@ -163,7 +166,7 @@ def main():
             conn.commit()
             print(f"归档成功: {content_id}", file=sys.stderr)
 
-        result = {"content_id": content_id, "file_path": dest_file, "status": "final"}
+        result = {"content_id": content_id, "file_path": rel_path, "status": "final"}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0)
 

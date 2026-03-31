@@ -24,12 +24,14 @@ def main():
 
     idea_id = str(uuid.uuid4())
     os.makedirs(INBOX_DIR, exist_ok=True)
-    file_path = os.path.join(INBOX_DIR, f"{idea_id}.md")
+    abs_path = os.path.join(INBOX_DIR, f"{idea_id}.md")
+    # 数据库存相对路径（相对于 data/content/）
+    rel_path = f"inbox/{idea_id}.md"
 
     conn = None
     try:
         # 写入文件
-        with open(file_path, "w", encoding="utf-8") as f:
+        with open(abs_path, "w", encoding="utf-8") as f:
             f.write(args.content)
 
         # 写入数据库
@@ -37,12 +39,12 @@ def main():
         conn.execute(
             """INSERT INTO ideas (id, title, tags, file_path)
                VALUES (?, ?, ?, ?)""",
-            (idea_id, args.title, args.tags, file_path),
+            (idea_id, args.title, args.tags, rel_path),
         )
         conn.commit()
 
         print(f"灵感已入库: {idea_id}", file=sys.stderr)
-        result = {"idea_id": idea_id, "file_path": file_path}
+        result = {"idea_id": idea_id, "file_path": rel_path}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0)
 
