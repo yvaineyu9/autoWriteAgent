@@ -1,9 +1,11 @@
-# 通用依赖
+# 核心依赖
 requests>=2.31.0
 
 # 社媒工具
 beautifulsoup4>=4.12.0
-notion-client>=2.2.0
 
 # 播客工具
 faster-whisper>=1.0.0
+
+# 可选：中文拼音（archive.py slug 生成）
+# pypinyin>=0.50.0

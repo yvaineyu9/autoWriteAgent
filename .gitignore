@@ -1,10 +1,14 @@
-# 敏感文件 - 绝对不要提交
+# 敏感文件
 .env
 *.key
 credentials/
 secrets/
+.secrets/
 
-# 输出文件 - 大文件不提交
+# 数据目录（不进 Git）
+data/
+
+# 输出文件
 *.mp4
 *.mp3
 *.wav
@@ -18,11 +22,6 @@ secrets/
 *.gif
 *.bmp
 *.tiff
-
-# 数据库文件
-*.db
-*.sqlite
-*.sqlite3
 
 # 系统文件
 .DS_Store
@@ -44,35 +43,3 @@ venv/
 
 # Node
 node_modules/
-
-# Obsidian（配置文件按需提交，这里先排除）
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/graph.json
-.obsidian/app.json
-.obsidian/appearance.json
-.obsidian/core-plugins.json
-.obsidian/community-plugins.json
-.obsidian/hotkeys.json
-
-# Obsidian 临时/测试文件
-未命名*.canvas
-未命名*.base
-Untitled*.canvas
-Untitled*.base
-social-media/tools/xhs-cli/node_modules/
-social-media/tools/xhs-cli/fonts/
-.secrets/
-
-# Web UI 构建产物
-web-ui/frontend/dist/
-
-# 数据仓库已独立到 ~/Desktop/vault/
-00_Inbox/
-10_Daily/
-20_Project/
-30_Research/
-40_Wiki/
-50_Resources/
-60_Published/
-70_Distribution/
