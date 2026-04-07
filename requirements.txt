@@ -7,5 +7,8 @@ beautifulsoup4>=4.12.0
 # 播客工具
 faster-whisper>=1.0.0
 
+# 浏览器自动化（scrape.py, monitor.py）
+playwright>=1.40.0
+
 # 可选：中文拼音（archive.py slug 生成）
 # pypinyin>=0.50.0

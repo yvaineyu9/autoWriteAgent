@@ -7,8 +7,8 @@ AI 内容生产系统。
 |------|------|------|
 | /create | 内容创作（写 + 审循环） | .claude/skills/create/SKILL.md |
 | /collect | 灵感采集 | .claude/skills/collect/SKILL.md |
-| /select | 选文推荐 | .claude/skills/select/SKILL.md |
-| /publish | 发布管理 | .claude/skills/publish/SKILL.md |
+| /select | 选文 + 生图 + 发布 | .claude/skills/select/SKILL.md |
+| /publish | 发布监控与数据管理 | .claude/skills/publish/SKILL.md |
 | /daily | 每日规划 | .claude/skills/daily/SKILL.md |
 
 ## 项目结构

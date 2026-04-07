@@ -1,0 +1,16 @@
+{
+  "profile_url": "https://www.xiaohongshu.com/user/profile/659b5bf80000000022017306?xsec_token=ABjWc1-ljduMozOOrKlN-61Ek21IzX2yLy39lloyGKbA0=&xsec_source=pc_search",
+  "monitoring": {
+    "read_only": true,
+    "allow_actions": [],
+    "collect_metrics": true,
+    "backfill_post_urls_from_account_page": true
+  },
+  "inspiration_sources": {
+    "allow_account_posts": true,
+    "allow_single_note_url": true,
+    "allow_favorites": true,
+    "allow_keywords": true,
+    "allow_search_results": true
+  }
+}

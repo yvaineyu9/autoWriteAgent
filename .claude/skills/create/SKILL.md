@@ -20,13 +20,23 @@
 读取 personas/<persona>/platforms/<platform>.md。
 
 ### Step 4 — 准备素材
-4a. 处理用户输入：
+4a. 从灵感库选题：
+  从 ideas 表中检索与主题相关的灵感（按 tags 匹配），读取对应 file_path 的内容：
+  ```sql
+  SELECT id, title, tags, file_path FROM ideas
+  WHERE status='pending' AND tags LIKE '%<关键词>%'
+  ORDER BY created_at DESC
+  ```
+  读取匹配灵感的文件内容，从中提炼可用的选题角度、观点、素材。
+  选定灵感后记录 idea_id，归档时传入 --source-idea。
+
+4b. 处理用户输入：
   - 纯文本：直接使用
   - URL：用 WebFetch 获取
   - 文件路径：用 Read 读取
   - 音频 URL：python3 tools/transcribe/podcast_transcribe.py <url>
 
-4b. 检索相关知识：
+4c. 检索相关知识：
   python3 tools/knowledge.py search "<关键词>"
   将返回的知识片段追加到素材末尾。无匹配则跳过。
 

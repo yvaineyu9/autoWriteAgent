@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-数据采集：记录发布内容的数据指标，提醒未采集数据的发布记录。
+数据采集：记录发布内容的点赞数据，提醒未采集数据的发布记录。
 """
 
 import argparse
@@ -23,18 +23,14 @@ def cmd_record(args):
 
         conn.execute(
             """INSERT INTO metrics (publication_id, views, likes, collects, comments, shares)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (args.pub_id, args.views, args.likes, args.collects, args.comments, args.shares),
+               VALUES (?, 0, ?, 0, 0, 0)""",
+            (args.pub_id, args.likes),
         )
         conn.commit()
 
         result = {
             "publication_id": args.pub_id,
-            "views": args.views,
             "likes": args.likes,
-            "collects": args.collects,
-            "comments": args.comments,
-            "shares": args.shares,
         }
         print(json.dumps(result, ensure_ascii=False))
         print(f"数据已记录: publication #{args.pub_id}", file=sys.stderr)
@@ -50,7 +46,7 @@ def cmd_remind(args):
     try:
         # 查找 published 但 7 天内未采集数据的发布记录
         rows = conn.execute(
-            """SELECT p.id, p.content_id, p.persona_id, p.platform, p.post_url, p.published_at
+            """SELECT p.id, p.content_id, p.persona_id, p.platform, p.published_at
                FROM publications p
                WHERE p.status = 'published'
                AND NOT EXISTS (
@@ -79,13 +75,9 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # record
-    p_record = subparsers.add_parser("record", help="记录数据指标")
+    p_record = subparsers.add_parser("record", help="记录点赞数据")
     p_record.add_argument("--pub-id", type=int, required=True, help="发布记录 ID")
-    p_record.add_argument("--views", type=int, required=True, help="浏览量")
     p_record.add_argument("--likes", type=int, required=True, help="点赞数")
-    p_record.add_argument("--collects", type=int, required=True, help="收藏数")
-    p_record.add_argument("--comments", type=int, required=True, help="评论数")
-    p_record.add_argument("--shares", type=int, required=True, help="分享数")
 
     # remind
     subparsers.add_parser("remind", help="查找未采集数据的发布记录")

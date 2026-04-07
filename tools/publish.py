@@ -23,13 +23,17 @@ def cmd_list(args):
         else:
             if args.status:
                 rows = conn.execute(
-                    "SELECT id, content_id, persona_id, platform, status, post_url, published_at, created_at "
+                    "SELECT id, content_id, persona_id, platform, status, post_url, "
+                    "platform_status, platform_checked_at, platform_failure_reason, "
+                    "published_at, created_at "
                     "FROM publications WHERE status = ? ORDER BY created_at DESC",
                     (args.status,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, content_id, persona_id, platform, status, post_url, published_at, created_at "
+                    "SELECT id, content_id, persona_id, platform, status, post_url, "
+                    "platform_status, platform_checked_at, platform_failure_reason, "
+                    "published_at, created_at "
                     "FROM publications ORDER BY created_at DESC"
                 ).fetchall()
 
@@ -96,7 +100,12 @@ def cmd_done(args):
 
         conn.execute(
             """UPDATE publications
-               SET status='published', post_url=?, published_at=datetime('now','localtime')
+               SET status='published',
+                   post_url=?,
+                   platform_status=NULL,
+                   platform_checked_at=NULL,
+                   platform_failure_reason=NULL,
+                   published_at=datetime('now','localtime')
                WHERE id=?""",
             (args.url, args.id),
         )

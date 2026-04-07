@@ -41,5 +41,8 @@ __pycache__/
 .venv/
 venv/
 
+# 编译产物
+tools/browser/.ocr_vision_bin
+
 # Node
 node_modules/

@@ -12,7 +12,7 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "autowrite.db")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 -- 灵感
@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS ideas (
     tags          TEXT,
     source        TEXT DEFAULT 'human',
     status        TEXT DEFAULT 'pending',
+    note_id       TEXT,
+    source_url    TEXT,
     file_path     TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -63,6 +65,9 @@ CREATE TABLE IF NOT EXISTS publications (
     account_id    TEXT,
     status        TEXT DEFAULT 'draft',
     post_url      TEXT,
+    platform_status TEXT,
+    platform_checked_at TEXT,
+    platform_failure_reason TEXT,
     published_at  TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (content_id) REFERENCES contents(content_id)
@@ -118,6 +123,8 @@ CREATE TABLE IF NOT EXISTS traces (
     created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_traces_task ON traces(task_id);
+CREATE INDEX IF NOT EXISTS idx_ideas_note_id ON ideas(note_id);
+CREATE INDEX IF NOT EXISTS idx_ideas_source_url ON ideas(source_url);
 
 -- schema 版本跟踪
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -156,12 +163,34 @@ def _migrate(conn: sqlite3.Connection):
     if current >= SCHEMA_VERSION:
         return
 
-    # 未来的增量 migration 在这里添加
-    # if current < 2:
-    #     conn.executescript(MIGRATION_V2_SQL)
+    if current < 2:
+        _migrate_v2(conn)
 
     conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
     conn.commit()
+
+
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r["name"] == column for r in rows)
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str):
+    if not _table_has_column(conn, table, column):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _migrate_v2(conn: sqlite3.Connection):
+    """补充浏览器采集去重和平台状态字段。"""
+    _ensure_column(conn, "ideas", "note_id", "TEXT")
+    _ensure_column(conn, "ideas", "source_url", "TEXT")
+
+    _ensure_column(conn, "publications", "platform_status", "TEXT")
+    _ensure_column(conn, "publications", "platform_checked_at", "TEXT")
+    _ensure_column(conn, "publications", "platform_failure_reason", "TEXT")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_note_id ON ideas(note_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_source_url ON ideas(source_url)")
 
 
 def init_db():
