@@ -17,15 +17,39 @@
       </nav>
     </aside>
     <main class="main-content">
+      <div class="flow-bar">
+        <template v-for="(step, i) in flowSteps" :key="i">
+          <span v-if="i > 0" class="flow-sep">&rarr;</span>
+          <router-link
+            :to="step.path"
+            class="flow-step"
+            :class="{ 'flow-active': currentPath === step.path }"
+          >{{ step.label }}</router-link>
+        </template>
+      </div>
       <router-view :persona-id="currentPersona" :personas="personas" />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, provide } from 'vue'
+import { ref, onMounted, provide, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { api } from './api/client'
 import type { PersonaOut } from './types'
+
+const route = useRoute()
+
+const flowSteps = [
+  { label: '采集灵感', path: '/ideas' },
+  { label: '创作文章', path: '/contents' },
+  { label: '排版生图', path: '/contents' },
+  { label: '选文', path: '/select' },
+  { label: '发布', path: '/publications' },
+  { label: '数据跟踪', path: '/publications' },
+]
+
+const currentPath = computed(() => route.path)
 
 const personas = ref<PersonaOut[]>([])
 const currentPersona = ref('')

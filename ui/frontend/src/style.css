@@ -77,6 +77,41 @@ body {
   overflow-x: auto;
 }
 
+/* Flow bar */
+.flow-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.flow-step {
+  color: #aaa;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.flow-step:hover {
+  color: #555;
+  background: #f0f0f0;
+}
+
+.flow-step.flow-active {
+  color: #1976d2;
+  background: #e3f2fd;
+  font-weight: 500;
+}
+
+.flow-sep {
+  color: #ddd;
+  font-size: 12px;
+}
+
 .page-header {
   display: flex;
   align-items: center;

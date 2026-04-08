@@ -23,6 +23,12 @@ const editStatus = ref('draft')
 const editUrl = ref('')
 const savingStatus = ref(false)
 
+// Go Publish dialog
+const showGoPublish = ref(false)
+const goPublishTarget = ref<PublicationOut | null>(null)
+const goPublishUrl = ref('')
+const goPublishSaving = ref(false)
+
 const toast = ref<{ msg: string; type: string } | null>(null)
 
 async function load() {
@@ -97,6 +103,32 @@ async function saveStatus() {
   }
 }
 
+function openGoPublish(p: PublicationOut) {
+  goPublishTarget.value = p
+  goPublishUrl.value = ''
+  showGoPublish.value = true
+}
+
+async function confirmGoPublish() {
+  if (!goPublishTarget.value) return
+  goPublishSaving.value = true
+  try {
+    await api.updatePublication(goPublishTarget.value.id, {
+      status: 'published',
+      post_url: goPublishUrl.value || undefined,
+    })
+    showGoPublish.value = false
+    toast.value = { msg: '已标记为已发布', type: 'success' }
+    setTimeout(() => toast.value = null, 3000)
+    load()
+  } catch (e: any) {
+    toast.value = { msg: e.message, type: 'error' }
+    setTimeout(() => toast.value = null, 4000)
+  } finally {
+    goPublishSaving.value = false
+  }
+}
+
 const platformLabel: Record<string, string> = {
   xiaohongshu: '小红书',
   wechat: '微信',
@@ -165,6 +197,9 @@ const statusLabel: Record<string, string> = {
           <td>{{ p.latest_metrics?.comments ?? '-' }}</td>
           <td>{{ p.latest_metrics?.shares ?? '-' }}</td>
           <td class="actions">
+            <button v-if="p.status === 'draft'" class="btn btn-primary btn-sm" style="white-space:nowrap;" @click="openGoPublish(p)">
+              去发布
+            </button>
             <button class="icon-btn" data-tip="编辑状态" @click="openStatusEdit(p)">
               <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
@@ -236,6 +271,30 @@ const statusLabel: Record<string, string> = {
           <button class="btn btn-secondary" @click="showMetrics = false">取消</button>
           <button class="btn btn-primary" :disabled="saving" @click="saveMetrics">
             {{ saving ? '保存中...' : '保存' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Go Publish Dialog -->
+    <div v-if="showGoPublish" class="modal-overlay" @click.self="showGoPublish = false">
+      <div class="modal" style="min-width: 480px;">
+        <h3>去发布</h3>
+        <div style="background: #f5faff; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+          <div style="font-weight: 600; margin-bottom: 4px;">{{ goPublishTarget?.content_title }}</div>
+          <div style="font-size: 12px; color: #888;">{{ platformLabel[goPublishTarget?.platform || ''] }}</div>
+        </div>
+        <p style="font-size: 13px; color: #555; margin-bottom: 12px; line-height: 1.6;">
+          请将文章内容发布到平台后，将发布链接粘贴到下方，点击确认完成发布记录。
+        </p>
+        <div class="form-group">
+          <label>发布链接</label>
+          <input v-model="goPublishUrl" type="text" placeholder="https://..." />
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="showGoPublish = false">取消</button>
+          <button class="btn btn-primary" :disabled="goPublishSaving" @click="confirmGoPublish">
+            {{ goPublishSaving ? '保存中...' : '确认已发布' }}
           </button>
         </div>
       </div>

@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, inject, watch, onMounted, onUnmounted } from 'vue'
+import { ref, inject, watch, onMounted, onUnmounted, computed } from 'vue'
 import type { Ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
-import type { ContentOut, PersonaOut } from '../types'
+import type { ContentOut, PersonaOut, IdeaOut } from '../types'
 
+const route = useRoute()
+const router = useRouter()
 const personaId = inject<Ref<string>>('currentPersona')!
 const injectedPersonas = inject<Ref<PersonaOut[]>>('personas')!
 
@@ -52,6 +55,67 @@ const deleteTarget = ref<ContentOut | null>(null)
 const deleting = ref(false)
 
 const toast = ref<{ msg: string; type: string } | null>(null)
+
+// Create article dialog
+const showCreateArticle = ref(false)
+const createIdeaId = ref('')
+const createIdeaTitle = ref('')
+const createPlatform = ref('')
+const creatingArticle = ref(false)
+const pendingIdeas = ref<IdeaOut[]>([])
+
+const currentPlatforms = computed(() => {
+  const p = injectedPersonas.value.find(pp => pp.id === personaId.value)
+  return p?.platforms || ['xiaohongshu']
+})
+
+async function openCreateArticleDialog(ideaId?: string) {
+  try {
+    pendingIdeas.value = await api.getIdeas('pending')
+  } catch { pendingIdeas.value = [] }
+
+  if (ideaId) {
+    createIdeaId.value = ideaId
+    const idea = pendingIdeas.value.find(i => i.id === ideaId)
+    createIdeaTitle.value = idea?.title || ''
+  } else if (pendingIdeas.value.length) {
+    createIdeaId.value = pendingIdeas.value[0].id
+    createIdeaTitle.value = ''
+  } else {
+    createIdeaId.value = ''
+    createIdeaTitle.value = ''
+  }
+
+  createPlatform.value = currentPlatforms.value[0] || 'xiaohongshu'
+  showCreateArticle.value = true
+}
+
+function onIdeaSelect() {
+  const idea = pendingIdeas.value.find(i => i.id === createIdeaId.value)
+  createIdeaTitle.value = idea?.title || ''
+}
+
+async function submitCreateArticle() {
+  if (!createIdeaId.value) return
+  creatingArticle.value = true
+  try {
+    const res = await api.createArticle({
+      idea_id: createIdeaId.value,
+      platform: createPlatform.value,
+      persona_id: personaId.value,
+    })
+    showCreateArticle.value = false
+    showToast('任务已启动: ' + res.task_id)
+    // Clear query params
+    if (route.query.create_from_idea || route.query.create) {
+      router.replace({ path: '/contents' })
+    }
+  } catch (e: any) {
+    showToast(e.message, 'error')
+  } finally {
+    creatingArticle.value = false
+  }
+}
 
 function confirmDelete(c: ContentOut) {
   deleteTarget.value = c
@@ -126,7 +190,15 @@ async function load() {
   loading.value = false
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  const ideaId = route.query.create_from_idea as string
+  if (ideaId) {
+    openCreateArticleDialog(ideaId)
+  } else if (route.query.create) {
+    openCreateArticleDialog()
+  }
+})
 watch(personaId, load)
 
 async function openEditor(c: ContentOut) {
@@ -258,6 +330,7 @@ const platformLabel: Record<string, string> = {
   <div>
     <div class="page-header">
       <h1>成品仓库</h1>
+      <button class="btn btn-primary" @click="openCreateArticleDialog()">创建文章</button>
     </div>
 
     <div class="filters">
@@ -496,6 +569,38 @@ const platformLabel: Record<string, string> = {
         <div v-else class="empty">无图片</div>
         <div class="modal-actions">
           <button class="btn btn-secondary" @click="showTypeset = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Article Dialog -->
+    <div v-if="showCreateArticle" class="modal-overlay" @click.self="showCreateArticle = false">
+      <div class="modal" style="min-width: 480px;">
+        <h3>创建文章</h3>
+        <div class="form-group">
+          <label>选择灵感</label>
+          <select v-model="createIdeaId" @change="onIdeaSelect">
+            <option v-for="idea in pendingIdeas" :key="idea.id" :value="idea.id">{{ idea.title }}</option>
+          </select>
+          <p v-if="pendingIdeas.length === 0" style="font-size: 12px; color: #999; margin-top: 4px;">
+            暂无待使用的灵感，请先到灵感池添加
+          </p>
+        </div>
+        <div v-if="currentPlatforms.length > 1" class="form-group">
+          <label>平台</label>
+          <select v-model="createPlatform">
+            <option v-for="p in currentPlatforms" :key="p" :value="p">{{ platformLabel[p] || p }}</option>
+          </select>
+        </div>
+        <div v-else class="form-group">
+          <label>平台</label>
+          <input :value="platformLabel[currentPlatforms[0]] || currentPlatforms[0]" disabled />
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="showCreateArticle = false">取消</button>
+          <button class="btn btn-primary" :disabled="creatingArticle || !createIdeaId" @click="submitCreateArticle">
+            {{ creatingArticle ? '提交中...' : '开始创作' }}
+          </button>
         </div>
       </div>
     </div>

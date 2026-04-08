@@ -103,7 +103,7 @@ const statusLabels: Record<string, string> = {
 function statusLabel(s: string) { return statusLabels[s] || s }
 
 function goCollect() { router.push('/ideas') }
-function goCreate() { router.push('/contents') }
+function goCreate() { router.push('/contents?create=1') }
 function goSelect() { router.push('/select') }
 </script>
 

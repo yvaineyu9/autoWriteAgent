@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../api/client'
 import type { IdeaOut } from '../types'
+
+const router = useRouter()
 
 const ideas = ref<IdeaOut[]>([])
 const loading = ref(true)
 const statusFilter = ref('')
-const showCreate = ref(false)
-const selectedIdea = ref<IdeaOut | null>(null)
-const platform = ref('xiaohongshu')
-const creating = ref(false)
-
 // Detail/Editor modal (unified)
 const showDetail = ref(false)
 const detailIdea = ref<IdeaOut | null>(null)
@@ -255,32 +253,15 @@ async function submitCollect() {
   }
 }
 
-// --- Create article from idea ---
+// --- Create article from idea (navigate to ContentsView) ---
 function openCreateFromDetail() {
   if (!detailIdea.value) return
   showDetail.value = false
-  openCreateDialog(detailIdea.value)
+  router.push('/contents?create_from_idea=' + detailIdea.value.id)
 }
 
 function openCreateDialog(idea: IdeaOut) {
-  selectedIdea.value = idea
-  platform.value = 'xiaohongshu'
-  showCreate.value = true
-}
-
-async function submitCreate() {
-  if (!selectedIdea.value) return
-  creating.value = true
-  try {
-    const res = await api.createArticle({ idea_id: selectedIdea.value.id, platform: platform.value })
-    showCreate.value = false
-    showToast('任务已启动: ' + res.task_id)
-    load()
-  } catch (e: any) {
-    showToast(e.message, 'error')
-  } finally {
-    creating.value = false
-  }
+  router.push('/contents?create_from_idea=' + idea.id)
 }
 
 // --- Delete ---
@@ -508,30 +489,6 @@ async function doDelete() {
             @click="submitCollect"
           >
             {{ collectSubmitting ? '提交中...' : collectStatus === 'running' ? 'AI 采集中...' : '开始采集' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Create Dialog -->
-    <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
-      <div class="modal">
-        <h3>从灵感创建文章</h3>
-        <div class="form-group">
-          <label>灵感</label>
-          <input :value="selectedIdea?.title" disabled />
-        </div>
-        <div class="form-group">
-          <label>平台</label>
-          <select v-model="platform">
-            <option value="xiaohongshu">小红书</option>
-            <option value="wechat">微信公众号</option>
-          </select>
-        </div>
-        <div class="modal-actions">
-          <button class="btn btn-secondary" @click="showCreate = false">取消</button>
-          <button class="btn btn-primary" :disabled="creating" @click="submitCreate">
-            {{ creating ? '提交中...' : '开始创作' }}
           </button>
         </div>
       </div>
