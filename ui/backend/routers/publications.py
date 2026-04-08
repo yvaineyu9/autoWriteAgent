@@ -8,8 +8,8 @@ router = APIRouter()
 
 
 @router.get("/publications", response_model=list)
-def get_publications(status: Optional[str] = Query(None)):
-    return list_publications(status)
+def get_publications(status: Optional[str] = Query(None), persona_id: Optional[str] = Query(None)):
+    return list_publications(status, persona_id)
 
 
 @router.patch("/publications/{pub_id}")

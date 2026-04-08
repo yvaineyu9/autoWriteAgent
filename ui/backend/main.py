@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routers import ideas, contents, publications, tasks
+from routers import ideas, contents, publications, tasks, personas, dashboard, select
 
 app = FastAPI(title="autoWriteAgent UI")
 
@@ -25,6 +25,9 @@ app.include_router(ideas.router, prefix="/api")
 app.include_router(contents.router, prefix="/api")
 app.include_router(publications.router, prefix="/api")
 app.include_router(tasks.router, prefix="/api")
+app.include_router(personas.router, prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
+app.include_router(select.router, prefix="/api")
 
 # Serve frontend static files
 DIST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")

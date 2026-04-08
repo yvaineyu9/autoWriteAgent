@@ -176,7 +176,7 @@ def _assemble_reviewer_input(reviewer_md: str, platform_ctx: str, draft: str) ->
     return f"{reviewer_md}\n---\n{platform_ctx}\n---\n## content to review\n\n{draft}"
 
 
-async def run_create_pipeline(task_id: str, idea_id: str, platform: str):
+async def run_create_pipeline(task_id: str, idea_id: str, platform: str, persona_id: str = "yuejian"):
     """Full create pipeline: writer -> reviewer -> iterate -> archive."""
     global _has_running_task
     t = _tasks[task_id]
@@ -186,7 +186,7 @@ async def run_create_pipeline(task_id: str, idea_id: str, platform: str):
         t.current_step = "Loading context..."
         t.updated_at = _now()
 
-        platform_ctx = _read_file(os.path.join(PERSONAS_DIR, "yuejian", "platforms", f"{platform}.md"))
+        platform_ctx = _read_file(os.path.join(PERSONAS_DIR, persona_id, "platforms", f"{platform}.md"))
         writer_md = _read_file(os.path.join(AGENTS_DIR, "writer.md"))
         reviewer_md = _read_file(os.path.join(AGENTS_DIR, "reviewer.md"))
 
@@ -283,7 +283,7 @@ async def run_create_pipeline(task_id: str, idea_id: str, platform: str):
         # Call archive.py
         archive_cmd = [
             sys.executable, os.path.join(TOOLS_DIR, "archive.py"),
-            "--persona", "yuejian",
+            "--persona", persona_id,
             "--platform", platform,
             "--title", title,
             "--file", final_draft_path,
@@ -339,11 +339,12 @@ async def run_revise_pipeline(task_id: str, content_id: str, feedback: str):
             raise RuntimeError(f"Content not found: {content_id}")
 
         platform = content["platform"]
+        persona_id = content.get("persona_id", "yuejian")
         body = read_content_body(content["file_path"])
         if not body:
             raise RuntimeError(f"Content file not found: {content['file_path']}")
 
-        platform_ctx = _read_file(os.path.join(PERSONAS_DIR, "yuejian", "platforms", f"{platform}.md"))
+        platform_ctx = _read_file(os.path.join(PERSONAS_DIR, persona_id, "platforms", f"{platform}.md"))
         writer_md = _read_file(os.path.join(AGENTS_DIR, "writer.md"))
         reviewer_md = _read_file(os.path.join(AGENTS_DIR, "reviewer.md"))
 
@@ -419,7 +420,7 @@ async def run_revise_pipeline(task_id: str, content_id: str, feedback: str):
         _has_running_task = False
 
 
-async def start_create(idea_id: str, platform: str) -> str:
+async def start_create(idea_id: str, platform: str, persona_id: str = "yuejian") -> str:
     """Start a create task. Returns task_id."""
     global _has_running_task
 
@@ -439,7 +440,7 @@ async def start_create(idea_id: str, platform: str) -> str:
         current_step="Starting...",
     )
     _has_running_task = True
-    asyncio.create_task(run_create_pipeline(task_id, idea_id, platform))
+    asyncio.create_task(run_create_pipeline(task_id, idea_id, platform, persona_id))
     return task_id
 
 
@@ -610,6 +611,101 @@ async def start_collect(source: str) -> str:
     )
     _has_running_task = True
     asyncio.create_task(run_collect_pipeline(task_id, source))
+    return task_id
+
+
+async def run_recommend_pipeline(task_id: str, persona_id: str):
+    """Use Selector Agent to recommend contents for publishing."""
+    global _has_running_task
+    t = _tasks[task_id]
+
+    try:
+        t.current_step = "Loading candidates..."
+        t.updated_at = _now()
+
+        from services.db_service import list_contents, get_content, read_content_body
+
+        contents = list_contents(status="final", persona_id=persona_id)
+
+        if not contents:
+            t.status = "completed"
+            t.result = {"recommendations": [], "notes": "No final contents available"}
+            t.current_step = "Done"
+            t.updated_at = _now()
+            return
+
+        # Build candidate list with summaries
+        candidates = []
+        for c in contents:
+            entry = {
+                "content_id": c["content_id"],
+                "title": c["title"],
+                "platform": c["platform"],
+                "review_score": c.get("review_score"),
+                "created_at": c["created_at"],
+            }
+            # Try to get first 200 chars as summary
+            full = get_content(c["content_id"])
+            if full and full.get("file_path"):
+                body = read_content_body(full["file_path"])
+                if body:
+                    entry["summary"] = body[:200]
+            candidates.append(entry)
+
+        t.current_step = "AI recommending..."
+        t.updated_at = _now()
+
+        selector_md = _read_file(os.path.join(AGENTS_DIR, "selector.md"))
+        candidates_json = json.dumps(candidates, ensure_ascii=False, indent=2)
+        prompt = "{}\n---\n## 候选列表\n\n```json\n{}\n```\n\n## 发布目标\n\n从以上候选中推荐适合发布的内容，优先选择评分高、时效性好的文章。".format(
+            selector_md, candidates_json
+        )
+
+        result_raw = await _run_claude(prompt, allowed_tools="")
+
+        # Parse JSON
+        raw = result_raw.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            raw = "\n".join(lines)
+
+        result = json.loads(raw)
+
+        t.status = "completed"
+        t.result = result
+        t.current_step = "Done"
+        t.updated_at = _now()
+
+    except Exception as e:
+        t.status = "failed"
+        t.error = str(e)
+        t.current_step = "Failed"
+        t.updated_at = _now()
+    finally:
+        _has_running_task = False
+
+
+async def start_recommend(persona_id: str) -> str:
+    """Start a recommend task. Returns task_id."""
+    global _has_running_task
+
+    if _has_running_task:
+        raise RuntimeError("A task is already running")
+
+    task_id = str(uuid.uuid4())[:8]
+    now = _now()
+    _tasks[task_id] = TaskState(
+        task_id=task_id,
+        task_type="recommend",
+        started_at=now,
+        updated_at=now,
+        current_step="Starting...",
+    )
+    _has_running_task = True
+    asyncio.create_task(run_recommend_pipeline(task_id, persona_id))
     return task_id
 
 

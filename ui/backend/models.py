@@ -72,6 +72,7 @@ class TaskStatus(BaseModel):
 class CreateArticleRequest(BaseModel):
     idea_id: str
     platform: str
+    persona_id: str = "yuejian"
 
 
 class ReviseContentRequest(BaseModel):
@@ -116,6 +117,11 @@ class CollectIdeasRequest(BaseModel):
 class ExpandIdeaRequest(BaseModel):
     idea_id: str
     instruction: str  # what to research/expand
+
+
+class SelectPublishRequest(BaseModel):
+    content_ids: list[str]
+    persona_id: str = "yuejian"
 
 
 class UpdatePublicationRequest(BaseModel):

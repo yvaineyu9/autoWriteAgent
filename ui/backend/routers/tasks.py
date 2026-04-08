@@ -18,7 +18,7 @@ async def create_article(req: CreateArticleRequest):
         raise HTTPException(409, "a task is already running, please wait")
 
     try:
-        task_id = await start_create(req.idea_id, req.platform)
+        task_id = await start_create(req.idea_id, req.platform, req.persona_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

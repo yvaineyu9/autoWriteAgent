@@ -36,11 +36,14 @@ def get_idea(idea_id: str) -> Optional[dict]:
         conn.close()
 
 
-def list_contents(status: Optional[str] = None, platform: Optional[str] = None) -> list:
+def list_contents(status: Optional[str] = None, platform: Optional[str] = None, persona_id: Optional[str] = None) -> list:
     conn = get_connection()
     try:
-        sql = "SELECT content_id, title, persona_id, platform, status, review_score, review_json, source_idea, created_at, updated_at FROM contents WHERE persona_id = 'yuejian'"
+        sql = "SELECT content_id, title, persona_id, platform, status, review_score, review_json, source_idea, created_at, updated_at FROM contents WHERE 1=1"
         params: list = []
+        if persona_id:
+            sql += " AND persona_id = ?"
+            params.append(persona_id)
         if status:
             sql += " AND status = ?"
             params.append(status)
@@ -164,7 +167,7 @@ def read_idea_body(file_path: str) -> Optional[str]:
         return f.read()
 
 
-def list_publications(status: Optional[str] = None) -> list:
+def list_publications(status: Optional[str] = None, persona_id: Optional[str] = None) -> list:
     conn = get_connection()
     try:
         sql = """
@@ -176,9 +179,12 @@ def list_publications(status: Optional[str] = None) -> list:
             LEFT JOIN contents c ON p.content_id = c.content_id
             LEFT JOIN metrics m ON m.publication_id = p.id
                 AND m.id = (SELECT MAX(m2.id) FROM metrics m2 WHERE m2.publication_id = p.id)
-            WHERE p.persona_id = 'yuejian'
+            WHERE 1=1
         """
         params: list = []
+        if persona_id:
+            sql += " AND p.persona_id = ?"
+            params.append(persona_id)
         if status:
             sql += " AND p.status = ?"
             params.append(status)
@@ -284,6 +290,84 @@ def update_idea_status(idea_id: str, status: str):
         conn.commit()
     finally:
         conn.close()
+
+
+def dashboard_stats(persona_id: Optional[str] = None) -> dict:
+    conn = get_connection()
+    try:
+        p_filter = ""
+        p_params: list = []
+        if persona_id:
+            p_filter = " AND persona_id = ?"
+            p_params = [persona_id]
+
+        # Ideas stats (ideas don't have persona_id, so no filter)
+        idea_rows = conn.execute("SELECT status, COUNT(*) as count FROM ideas GROUP BY status").fetchall()
+        ideas = {r["status"]: r["count"] for r in idea_rows}
+
+        # Contents stats
+        content_rows = conn.execute(
+            "SELECT status, COUNT(*) as count FROM contents WHERE 1=1" + p_filter + " GROUP BY status",
+            p_params,
+        ).fetchall()
+        contents = {r["status"]: r["count"] for r in content_rows}
+
+        # Publications stats
+        pub_total = conn.execute(
+            "SELECT COUNT(*) as c FROM publications WHERE status='published'" + (" AND persona_id = ?" if persona_id else ""),
+            [persona_id] if persona_id else [],
+        ).fetchone()["c"]
+        pub_week = conn.execute(
+            "SELECT COUNT(*) as c FROM publications WHERE status='published' AND published_at >= date('now', '-7 days', 'localtime')"
+            + (" AND persona_id = ?" if persona_id else ""),
+            [persona_id] if persona_id else [],
+        ).fetchone()["c"]
+
+        # Recent activity
+        activity_rows = conn.execute(
+            """SELECT sl.content_id, c.title, sl.from_status, sl.to_status, sl.created_at
+               FROM status_log sl LEFT JOIN contents c ON sl.content_id = c.content_id
+               ORDER BY sl.created_at DESC LIMIT 10"""
+        ).fetchall()
+        activity = [dict(r) for r in activity_rows]
+
+        return {
+            "ideas_pending": ideas.get("pending", 0),
+            "contents_final": contents.get("final", 0),
+            "published_total": pub_total,
+            "published_week": pub_week,
+            "activity": activity,
+        }
+    finally:
+        conn.close()
+
+
+def list_personas() -> list:
+    """Scan personas/ directory and return persona list."""
+    personas = []
+    if not os.path.isdir(os.path.join(PROJ_ROOT, "personas")):
+        return personas
+    for name in sorted(os.listdir(os.path.join(PROJ_ROOT, "personas"))):
+        persona_dir = os.path.join(PROJ_ROOT, "personas", name)
+        if not os.path.isdir(persona_dir):
+            continue
+        # Extract display name from index.md first line "# xxx"
+        display_name = name
+        index_path = os.path.join(persona_dir, "index.md")
+        if os.path.isfile(index_path):
+            with open(index_path, "r", encoding="utf-8") as f:
+                first_line = f.readline().strip()
+                if first_line.startswith("# "):
+                    display_name = first_line[2:].strip()
+        # Extract platforms from platforms/ directory
+        platforms_dir = os.path.join(persona_dir, "platforms")
+        platforms = []
+        if os.path.isdir(platforms_dir):
+            for pf in sorted(os.listdir(platforms_dir)):
+                if pf.endswith(".md"):
+                    platforms.append(pf[:-3])
+        personas.append({"id": name, "name": display_name, "platforms": platforms})
+    return personas
 
 
 def update_content_after_revise(content_id: str, review_score: Optional[int], review_json: Optional[str]):

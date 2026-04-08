@@ -17,8 +17,8 @@ router = APIRouter()
 
 
 @router.get("/contents", response_model=list)
-def get_contents(status: Optional[str] = Query(None), platform: Optional[str] = Query(None)):
-    return list_contents(status, platform)
+def get_contents(status: Optional[str] = Query(None), platform: Optional[str] = Query(None), persona_id: Optional[str] = Query(None)):
+    return list_contents(status, platform, persona_id)
 
 
 @router.get("/contents/{content_id}/body")

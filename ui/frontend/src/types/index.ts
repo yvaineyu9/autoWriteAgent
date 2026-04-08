@@ -60,3 +60,23 @@ export interface TaskStatus {
   started_at: string
   updated_at: string
 }
+
+export interface PersonaOut {
+  id: string
+  name: string
+  platforms: string[]
+}
+
+export interface DashboardData {
+  ideas_pending: number
+  contents_final: number
+  published_total: number
+  published_week: number
+  activity: Array<{
+    content_id: string
+    title: string | null
+    from_status: string
+    to_status: string
+    created_at: string
+  }>
+}

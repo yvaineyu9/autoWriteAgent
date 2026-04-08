@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, inject, watch, onMounted } from 'vue'
+import type { Ref } from 'vue'
 import { api } from '../api/client'
 import type { PublicationOut } from '../types'
+
+const personaId = inject<Ref<string>>('currentPersona')!
 
 const pubs = ref<PublicationOut[]>([])
 const loading = ref(true)
@@ -24,11 +27,15 @@ const toast = ref<{ msg: string; type: string } | null>(null)
 
 async function load() {
   loading.value = true
-  pubs.value = await api.getPublications(statusFilter.value || undefined)
+  pubs.value = await api.getPublications({
+    status: statusFilter.value || undefined,
+    persona_id: personaId.value || undefined,
+  })
   loading.value = false
 }
 
 onMounted(load)
+watch(personaId, load)
 
 function openMetrics(p: PublicationOut) {
   metricTarget.value = p

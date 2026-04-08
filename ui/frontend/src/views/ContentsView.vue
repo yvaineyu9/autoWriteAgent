@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, inject, watch, onMounted, onUnmounted } from 'vue'
+import type { Ref } from 'vue'
 import { api } from '../api/client'
-import type { ContentOut } from '../types'
+import type { ContentOut, PersonaOut } from '../types'
+
+const personaId = inject<Ref<string>>('currentPersona')!
+const injectedPersonas = inject<Ref<PersonaOut[]>>('personas')!
 
 const contents = ref<ContentOut[]>([])
 const loading = ref(true)
@@ -113,7 +117,9 @@ async function pollTask() {
 
 async function load() {
   loading.value = true
-  const params: Record<string, string> = {}
+  const params: Record<string, string | undefined> = {
+    persona_id: personaId.value || undefined,
+  }
   if (statusFilter.value) params.status = statusFilter.value
   if (platformFilter.value) params.platform = platformFilter.value
   contents.value = await api.getContents(params)
@@ -121,6 +127,7 @@ async function load() {
 }
 
 onMounted(load)
+watch(personaId, load)
 
 async function openEditor(c: ContentOut) {
   editorTarget.value = c
@@ -196,7 +203,7 @@ async function openTypesetConfig(c: ContentOut) {
   typesetTarget.value = c
   typesetTool.value = 'v2'
   typesetCustomCoverUrl.value = ''
-  typesetPersona.value = 'yuejian'
+  typesetPersona.value = personaId.value || 'yuejian'
   showTypesetConfig.value = true
   try {
     builtinCovers.value = await api.listCovers()
@@ -239,10 +246,7 @@ async function doTypeset() {
   }
 }
 
-const personas = [
-  { id: 'yuejian', name: '月见', desc: '关系心理学 x 文艺情感' },
-  { id: 'chongxiaoyu', name: '虫小宇', desc: 'Gen Z 占星 + AI' },
-]
+const personas = injectedPersonas
 
 const platformLabel: Record<string, string> = {
   xiaohongshu: '小红书',
@@ -457,7 +461,7 @@ const platformLabel: Record<string, string> = {
               @click="typesetPersona = p.id"
             >
               <strong>{{ p.name }}</strong>
-              <span>{{ p.desc }}</span>
+              <span>{{ p.platforms.join(', ') }}</span>
             </div>
           </div>
         </div>

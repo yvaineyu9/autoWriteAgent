@@ -5,6 +5,8 @@ import type {
   PublicationOut,
   TaskStatus,
   MetricsOut,
+  PersonaOut,
+  DashboardData,
 } from '../types'
 
 const BASE = '/api'
@@ -73,6 +75,11 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 }
 
 export const api = {
+  // Personas
+  getPersonas: () => get<PersonaOut[]>('/personas'),
+  // Dashboard
+  getDashboard: (persona_id?: string) => get<DashboardData>('/dashboard', { persona_id }),
+  // Ideas
   getIdeas: (status?: string) => get<IdeaOut[]>('/ideas', { status }),
   getIdeaBody: (id: string) => get<{ id: string; title: string; body: string }>(`/ideas/${id}/body`),
   createIdea: (data: { title: string; content: string; tags: string }) => post<IdeaOut>('/ideas', data),
@@ -80,20 +87,26 @@ export const api = {
   deleteIdea: (id: string) => del_(`/ideas/${id}`),
   collectIdeas: (source: string) => post<{ task_id: string }>('/tasks/collect', { source }),
   expandIdea: (idea_id: string, instruction: string) => post<{ task_id: string }>('/tasks/expand', { idea_id, instruction }),
-  getContents: (params?: { status?: string; platform?: string }) => get<ContentOut[]>('/contents', params),
+  // Contents
+  getContents: (params?: { status?: string; platform?: string; persona_id?: string }) => get<ContentOut[]>('/contents', params),
   getContentBody: (id: string) => get<ContentBodyOut>(`/contents/${id}/body`),
   saveContentBody: (id: string, body: string) => put<{ saved: boolean }>(`/contents/${id}/body`, { body }),
   deleteContent: (id: string) => del_(`/contents/${id}`),
   typesetContent: (id: string, opts?: { tool?: string; cover_url?: string; avatar_url?: string }) =>
     post<{ content_id: string; images: string[]; count: number; tool: string }>(`/contents/${id}/typeset`, opts || {}),
   listCovers: () => get<string[]>('/typeset/covers'),
-  getPublications: (status?: string) => get<PublicationOut[]>('/publications', { status }),
+  // Publications
+  getPublications: (params?: { status?: string; persona_id?: string }) => get<PublicationOut[]>('/publications', params),
   updatePublication: (pubId: number, data: { status: string; post_url?: string }) =>
     patch<PublicationOut>(`/publications/${pubId}`, data),
   recordMetrics: (pubId: number, data: { views: number; likes: number; collects: number; comments: number; shares: number }) =>
     put<MetricsOut>(`/publications/${pubId}/metrics`, data),
-  createArticle: (data: { idea_id: string; platform: string }) => post<{ task_id: string }>('/tasks/create', data),
+  // Tasks
+  createArticle: (data: { idea_id: string; platform: string; persona_id?: string }) => post<{ task_id: string }>('/tasks/create', data),
   reviseContent: (data: { content_id: string; feedback: string }) => post<{ task_id: string }>('/tasks/revise', data),
   getTasks: () => get<TaskStatus[]>('/tasks'),
   getTask: (id: string) => get<TaskStatus>(`/tasks/${id}`),
+  // Select
+  selectRecommend: (persona_id: string) => post<{ task_id: string }>(`/select/recommend?persona_id=${encodeURIComponent(persona_id)}`, {}),
+  selectPublish: (data: { content_ids: string[]; persona_id: string }) => post<{ published: number; content_ids: string[] }>('/select/publish', data),
 }
