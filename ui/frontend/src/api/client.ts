@@ -1,0 +1,99 @@
+import type {
+  IdeaOut,
+  ContentOut,
+  ContentBodyOut,
+  PublicationOut,
+  TaskStatus,
+  MetricsOut,
+} from '../types'
+
+const BASE = '/api'
+
+async function get<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
+  const url = new URL(BASE + path, window.location.origin)
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') url.searchParams.set(k, v)
+    })
+  }
+  const res = await fetch(url.toString())
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  return res.json()
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  return res.json()
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  return res.json()
+}
+
+async function del_<T>(path: string): Promise<T> {
+  const res = await fetch(BASE + path, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  return res.json()
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  return res.json()
+}
+
+export const api = {
+  getIdeas: (status?: string) => get<IdeaOut[]>('/ideas', { status }),
+  getIdeaBody: (id: string) => get<{ id: string; title: string; body: string }>(`/ideas/${id}/body`),
+  createIdea: (data: { title: string; content: string; tags: string }) => post<IdeaOut>('/ideas', data),
+  updateIdea: (id: string, data: { title: string; content: string; tags: string }) => put<IdeaOut>(`/ideas/${id}`, data),
+  deleteIdea: (id: string) => del_(`/ideas/${id}`),
+  collectIdeas: (source: string) => post<{ task_id: string }>('/tasks/collect', { source }),
+  expandIdea: (idea_id: string, instruction: string) => post<{ task_id: string }>('/tasks/expand', { idea_id, instruction }),
+  getContents: (params?: { status?: string; platform?: string }) => get<ContentOut[]>('/contents', params),
+  getContentBody: (id: string) => get<ContentBodyOut>(`/contents/${id}/body`),
+  saveContentBody: (id: string, body: string) => put<{ saved: boolean }>(`/contents/${id}/body`, { body }),
+  deleteContent: (id: string) => del_(`/contents/${id}`),
+  typesetContent: (id: string, opts?: { tool?: string; cover_url?: string; avatar_url?: string }) =>
+    post<{ content_id: string; images: string[]; count: number; tool: string }>(`/contents/${id}/typeset`, opts || {}),
+  listCovers: () => get<string[]>('/typeset/covers'),
+  getPublications: (status?: string) => get<PublicationOut[]>('/publications', { status }),
+  updatePublication: (pubId: number, data: { status: string; post_url?: string }) =>
+    patch<PublicationOut>(`/publications/${pubId}`, data),
+  recordMetrics: (pubId: number, data: { views: number; likes: number; collects: number; comments: number; shares: number }) =>
+    put<MetricsOut>(`/publications/${pubId}/metrics`, data),
+  createArticle: (data: { idea_id: string; platform: string }) => post<{ task_id: string }>('/tasks/create', data),
+  reviseContent: (data: { content_id: string; feedback: string }) => post<{ task_id: string }>('/tasks/revise', data),
+  getTasks: () => get<TaskStatus[]>('/tasks'),
+  getTask: (id: string) => get<TaskStatus>(`/tasks/${id}`),
+}
