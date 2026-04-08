@@ -106,6 +106,7 @@ export const api = {
   reviseContent: (data: { content_id: string; feedback: string }) => post<{ task_id: string }>('/tasks/revise', data),
   getTasks: () => get<TaskStatus[]>('/tasks'),
   getTask: (id: string) => get<TaskStatus>(`/tasks/${id}`),
+  retryTask: (id: string) => post<{ task_id: string }>(`/tasks/${id}/retry`, {}),
   // Select
   selectRecommend: (persona_id: string) => post<{ task_id: string }>(`/select/recommend?persona_id=${encodeURIComponent(persona_id)}`, {}),
   selectPublish: (data: { content_ids: string[]; persona_id: string }) => post<{ published: number; content_ids: string[] }>('/select/publish', data),

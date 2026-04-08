@@ -63,11 +63,12 @@ MAX_ROUNDS = 3
 @dataclass
 class TaskState:
     task_id: str
-    task_type: str  # "create" or "revise"
+    task_type: str  # "create", "revise", "collect", "expand", "recommend"
     status: str = "running"  # running / completed / failed
     current_step: str = ""
     result: Optional[dict] = None
     error: Optional[str] = None
+    params: Optional[dict] = None  # original input params for retry
     started_at: str = ""
     updated_at: str = ""
 
@@ -82,26 +83,7 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def get_all_tasks() -> list[dict]:
-    return [
-        {
-            "task_id": t.task_id,
-            "task_type": t.task_type,
-            "status": t.status,
-            "current_step": t.current_step,
-            "result": t.result,
-            "error": t.error,
-            "started_at": t.started_at,
-            "updated_at": t.updated_at,
-        }
-        for t in _tasks.values()
-    ]
-
-
-def get_task(task_id: str):
-    t = _tasks.get(task_id)
-    if not t:
-        return None
+def _task_to_dict(t: TaskState) -> dict:
     return {
         "task_id": t.task_id,
         "task_type": t.task_type,
@@ -112,6 +94,17 @@ def get_task(task_id: str):
         "started_at": t.started_at,
         "updated_at": t.updated_at,
     }
+
+
+def get_all_tasks() -> list[dict]:
+    return [_task_to_dict(t) for t in _tasks.values()]
+
+
+def get_task(task_id: str):
+    t = _tasks.get(task_id)
+    if not t:
+        return None
+    return _task_to_dict(t)
 
 
 def has_running_task() -> bool:
@@ -435,6 +428,7 @@ async def start_create(idea_id: str, platform: str, persona_id: str = "yuejian")
     _tasks[task_id] = TaskState(
         task_id=task_id,
         task_type="create",
+        params={"idea_id": idea_id, "platform": platform, "persona_id": persona_id},
         started_at=now,
         updated_at=now,
         current_step="Starting...",
@@ -584,6 +578,7 @@ async def start_expand(idea_id: str, instruction: str) -> str:
     _tasks[task_id] = TaskState(
         task_id=task_id,
         task_type="expand",
+        params={"idea_id": idea_id, "instruction": instruction},
         started_at=now,
         updated_at=now,
         current_step="Starting...",
@@ -605,6 +600,7 @@ async def start_collect(source: str) -> str:
     _tasks[task_id] = TaskState(
         task_id=task_id,
         task_type="collect",
+        params={"source": source},
         started_at=now,
         updated_at=now,
         current_step="Starting...",
@@ -700,6 +696,7 @@ async def start_recommend(persona_id: str) -> str:
     _tasks[task_id] = TaskState(
         task_id=task_id,
         task_type="recommend",
+        params={"persona_id": persona_id},
         started_at=now,
         updated_at=now,
         current_step="Starting...",
@@ -721,6 +718,7 @@ async def start_revise(content_id: str, feedback: str) -> str:
     _tasks[task_id] = TaskState(
         task_id=task_id,
         task_type="revise",
+        params={"content_id": content_id, "feedback": feedback},
         started_at=now,
         updated_at=now,
         current_step="Starting...",
@@ -728,3 +726,28 @@ async def start_revise(content_id: str, feedback: str) -> str:
     _has_running_task = True
     asyncio.create_task(run_revise_pipeline(task_id, content_id, feedback))
     return task_id
+
+
+async def retry_task(task_id: str) -> str:
+    """Retry a failed task with original params. Returns new task_id."""
+    t = _tasks.get(task_id)
+    if not t:
+        raise RuntimeError("Task not found: {}".format(task_id))
+    if t.status != "failed":
+        raise RuntimeError("Only failed tasks can be retried")
+    if not t.params:
+        raise RuntimeError("Task has no stored params for retry")
+
+    p = t.params
+    if t.task_type == "create":
+        return await start_create(p["idea_id"], p["platform"], p.get("persona_id", "yuejian"))
+    elif t.task_type == "revise":
+        return await start_revise(p["content_id"], p["feedback"])
+    elif t.task_type == "collect":
+        return await start_collect(p["source"])
+    elif t.task_type == "expand":
+        return await start_expand(p["idea_id"], p["instruction"])
+    elif t.task_type == "recommend":
+        return await start_recommend(p.get("persona_id", "yuejian"))
+    else:
+        raise RuntimeError("Unknown task type: {}".format(t.task_type))

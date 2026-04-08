@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from models import CreateArticleRequest, ReviseContentRequest, CollectIdeasRequest, ExpandIdeaRequest, TaskStatus
 from services.db_service import get_idea, get_content
-from services.agent_runner import start_create, start_revise, start_collect, start_expand, get_all_tasks, get_task, has_running_task
+from services.agent_runner import start_create, start_revise, start_collect, start_expand, get_all_tasks, get_task, has_running_task, retry_task
 
 router = APIRouter()
 
@@ -81,3 +81,14 @@ def get_task_status(task_id: str):
     if not t:
         raise HTTPException(404, "task not found")
     return t
+
+
+@router.post("/tasks/{task_id}/retry", status_code=202)
+async def retry_task_endpoint(task_id: str):
+    if has_running_task():
+        raise HTTPException(409, "a task is already running, please wait")
+    try:
+        new_task_id = await retry_task(task_id)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    return {"task_id": new_task_id}
