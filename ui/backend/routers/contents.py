@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shutil
 import sys
 from typing import Optional
 
@@ -12,6 +13,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(o
 XHS_CLI_V1 = os.path.join(PROJECT_ROOT, "tools", "xhs-cli", "xhs-gen.js")
 XHS_CLI_V2 = os.path.join(PROJECT_ROOT, "tools", "xhs-cli", "xhs-gen-v2.js")
 XHS_ASSETS = os.path.join(PROJECT_ROOT, "tools", "xhs-cli", "assets")
+
+# asyncio.create_subprocess_exec 不做 PATH 搜索，必须给绝对路径。
+# shutil.which 会按当前进程 PATH 查找；LaunchAgent 的 plist 里已把
+# /opt/homebrew/bin 放入 PATH，所以这里能正确解析到 node 的实际位置。
+NODE_BIN = shutil.which("node") or "/opt/homebrew/bin/node"
 
 router = APIRouter()
 
@@ -96,7 +102,7 @@ async def typeset_content(content_id: str, req: TypesetRequest):
         f.write(body)
 
     cli_script = XHS_CLI_V1 if req.tool == "v1" else XHS_CLI_V2
-    cmd = ["node", cli_script, "-i", tmp_input, "-o", output_dir]
+    cmd = [NODE_BIN, cli_script, "-i", tmp_input, "-o", output_dir]
 
     if req.cover_url:
         if req.cover_url.startswith("asset:"):

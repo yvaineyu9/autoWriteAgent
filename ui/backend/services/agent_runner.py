@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -76,7 +77,8 @@ class TaskState:
 # In-memory task registry
 _tasks: dict[str, TaskState] = {}
 _running_lock = asyncio.Lock()
-_has_running_task = False
+_MAX_CONCURRENT = 3
+_running_count = 0
 
 
 def _now() -> str:
@@ -108,7 +110,8 @@ def get_task(task_id: str):
 
 
 def has_running_task() -> bool:
-    return _has_running_task
+    """Returns True only when the concurrency limit is reached (not when any task exists)."""
+    return _running_count >= _MAX_CONCURRENT
 
 
 def _read_file(path: str) -> str:
@@ -119,7 +122,8 @@ def _read_file(path: str) -> str:
 def _get_env():
     """Get environment with expanded PATH and proxy for claude."""
     env = os.environ.copy()
-    extra = "/opt/homebrew/bin:/usr/local/bin"
+    home = os.path.expanduser("~")
+    extra = f"{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin"
     env["PATH"] = extra + ":" + env.get("PATH", "/usr/bin:/bin")
     # Proxy required on Mac Mini for claude to reach Anthropic API
     proxy = "http://127.0.0.1:10808"
@@ -133,24 +137,106 @@ def _get_env():
 
 
 async def _run_claude(input_text, allowed_tools=None):
-    """Run claude -p with input text, return stdout."""
-    cmd = "claude -p"
+    """Run claude -p via GUI Terminal.app.
+
+    Claude Code 的 OAuth 凭据存在 macOS login keychain 里，SSH / LaunchAgent
+    这类非 GUI 上下文访问不到（keychain 锁着）。所以用 `open -a Terminal.app`
+    把 claude 扔到已登录的 GUI 用户会话里跑，借助已解锁的 login keychain
+    读到凭据。I/O 走 /tmp 临时文件，退出码通过 done sentinel 文件回传，
+    主进程轮询 sentinel 等结果。
+    """
+    rid = uuid.uuid4().hex[:12]
+    req_path = f"/tmp/claude_{rid}_in.txt"
+    out_path = f"/tmp/claude_{rid}_out.txt"
+    done_path = f"/tmp/claude_{rid}_done"
+    wrap_path = f"/tmp/claude_{rid}_wrap.sh"
+
+    with open(req_path, "w", encoding="utf-8") as f:
+        f.write(input_text)
+
+    cmd = '"$HOME/.local/bin/claude" -p'
     if allowed_tools is not None:
         cmd += ' --allowedTools "{}"'.format(allowed_tools)
 
-    proc = await asyncio.create_subprocess_shell(
-        cmd,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=PROJECT_ROOT,
-        env=_get_env(),
+    wrapper = (
+        "#!/bin/bash\n"
+        f"cd {PROJECT_ROOT}\n"
+        f"{cmd} < {req_path} > {out_path} 2>&1\n"
+        f"echo $? > {done_path}\n"
+        "exit\n"
     )
-    stdout, stderr = await proc.communicate(input=input_text.encode("utf-8"))
-    if proc.returncode != 0:
-        err_msg = stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"claude exited with code {proc.returncode}: {err_msg}")
-    return stdout.decode("utf-8", errors="replace")
+    with open(wrap_path, "w", encoding="utf-8") as f:
+        f.write(wrapper)
+    os.chmod(wrap_path, 0o755)
+
+    proc = await asyncio.create_subprocess_exec(
+        "open", "-a", "Terminal.app", wrap_path,
+    )
+    await proc.communicate()
+
+    timeout = 300.0
+    elapsed = 0.0
+    while elapsed < timeout:
+        if os.path.exists(done_path):
+            break
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
+
+    try:
+        if not os.path.exists(done_path):
+            raise RuntimeError(f"claude timeout after {int(timeout)}s")
+
+        with open(done_path) as f:
+            rc_text = f.read().strip()
+        rc = int(rc_text) if rc_text else 1
+
+        output = ""
+        if os.path.exists(out_path):
+            with open(out_path, encoding="utf-8") as f:
+                output = f.read()
+
+        if rc != 0:
+            raise RuntimeError(f"claude exited with code {rc}: {output.strip()}")
+        return output
+    finally:
+        for p in (req_path, out_path, done_path, wrap_path):
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
+
+
+def _strip_writer_meta(raw: str) -> str:
+    """Strip meta commentary from writer output (pre-commentary, code fences, post-commentary).
+
+    Writer 在改稿模式下可能漏网一些"我来改稿"之类的 meta 叙述 / ```markdown 代码块包裹 /
+    文末"改稿要点"。这里做兜底清洗：
+      1. 去掉所有 ```xxx / ``` 代码围栏行
+      2. 截取从第一个 `---\\n`（frontmatter 起始）开始的内容
+      3. 截取到最后一个形如 `#xxx #yyy` 的标签行为止
+    """
+    if not raw:
+        return raw
+
+    # 1. 去掉代码围栏行
+    lines = [ln for ln in raw.split("\n") if not re.match(r"^\s*```", ln)]
+
+    # 2. 从第一个 `---` frontmatter 起始行开始保留
+    start = 0
+    for i, ln in enumerate(lines):
+        if ln.strip() == "---":
+            start = i
+            break
+
+    # 3. 到最后一个 hashtag 行为止（小红书标签行形如 "#恋爱心理学 #亲密关系"）
+    end = len(lines)
+    hashtag_re = re.compile(r"^#\S+(\s+#\S+)*\s*$")
+    for i in range(len(lines) - 1, start, -1):
+        if hashtag_re.match(lines[i].strip()):
+            end = i + 1
+            break
+
+    return "\n".join(lines[start:end]).strip() + "\n"
 
 
 def _assemble_writer_input(
@@ -171,7 +257,7 @@ def _assemble_reviewer_input(reviewer_md: str, platform_ctx: str, draft: str) ->
 
 async def run_create_pipeline(task_id: str, idea_id: str, platform: str, persona_id: str = "yuejian"):
     """Full create pipeline: writer -> reviewer -> iterate -> archive."""
-    global _has_running_task
+    global _running_count
     t = _tasks[task_id]
 
     try:
@@ -210,6 +296,7 @@ async def run_create_pipeline(task_id: str, idea_id: str, platform: str, persona
 
             writer_input = _assemble_writer_input(writer_md, platform_ctx, materials, feedback)
             draft = await _run_claude(writer_input, allowed_tools="Read,WebFetch")
+            draft = _strip_writer_meta(draft)
 
             # Save draft
             with open(os.path.join(work_dir, f"draft_r{round_num}.md"), "w", encoding="utf-8") as f:
@@ -312,12 +399,12 @@ async def run_create_pipeline(task_id: str, idea_id: str, platform: str, persona
         t.current_step = "Failed"
         t.updated_at = _now()
     finally:
-        _has_running_task = False
+        _running_count -= 1
 
 
 async def run_revise_pipeline(task_id: str, content_id: str, feedback: str):
     """Revise existing content with user feedback."""
-    global _has_running_task
+    global _running_count
     t = _tasks[task_id]
 
     try:
@@ -355,6 +442,7 @@ async def run_revise_pipeline(task_id: str, content_id: str, feedback: str):
 
             writer_input = _assemble_writer_input(writer_md, platform_ctx, materials, current_feedback)
             draft = await _run_claude(writer_input, allowed_tools="Read,WebFetch")
+            draft = _strip_writer_meta(draft)
 
             with open(os.path.join(work_dir, f"draft_r{round_num}.md"), "w", encoding="utf-8") as f:
                 f.write(draft)
@@ -410,18 +498,18 @@ async def run_revise_pipeline(task_id: str, content_id: str, feedback: str):
         t.current_step = "Failed"
         t.updated_at = _now()
     finally:
-        _has_running_task = False
+        _running_count -= 1
 
 
 async def start_create(idea_id: str, platform: str, persona_id: str = "yuejian") -> str:
     """Start a create task. Returns task_id."""
-    global _has_running_task
+    global _running_count
 
     if platform not in VALID_PLATFORMS:
         raise ValueError(f"Invalid platform: {platform}. Must be one of {VALID_PLATFORMS}")
 
-    if _has_running_task:
-        raise RuntimeError("A task is already running")
+    if _running_count >= _MAX_CONCURRENT:
+        raise RuntimeError(f"Max concurrent tasks reached ({_MAX_CONCURRENT})")
 
     task_id = str(uuid.uuid4())[:8]
     now = _now()
@@ -433,14 +521,14 @@ async def start_create(idea_id: str, platform: str, persona_id: str = "yuejian")
         updated_at=now,
         current_step="Starting...",
     )
-    _has_running_task = True
+    _running_count += 1
     asyncio.create_task(run_create_pipeline(task_id, idea_id, platform, persona_id))
     return task_id
 
 
 async def run_collect_pipeline(task_id: str, source: str):
     """Collect ideas from a source using the collector agent."""
-    global _has_running_task
+    global _running_count
     t = _tasks[task_id]
 
     try:
@@ -512,12 +600,12 @@ async def run_collect_pipeline(task_id: str, source: str):
         t.current_step = "Failed"
         t.updated_at = _now()
     finally:
-        _has_running_task = False
+        _running_count -= 1
 
 
 async def run_expand_pipeline(task_id: str, idea_id: str, instruction: str):
     """Expand/refine a single idea with AI based on user instruction."""
-    global _has_running_task
+    global _running_count
     t = _tasks[task_id]
 
     try:
@@ -563,15 +651,15 @@ async def run_expand_pipeline(task_id: str, idea_id: str, instruction: str):
         t.current_step = "Failed"
         t.updated_at = _now()
     finally:
-        _has_running_task = False
+        _running_count -= 1
 
 
 async def start_expand(idea_id: str, instruction: str) -> str:
     """Start an expand task. Returns task_id."""
-    global _has_running_task
+    global _running_count
 
-    if _has_running_task:
-        raise RuntimeError("A task is already running")
+    if _running_count >= _MAX_CONCURRENT:
+        raise RuntimeError(f"Max concurrent tasks reached ({_MAX_CONCURRENT})")
 
     task_id = str(uuid.uuid4())[:8]
     now = _now()
@@ -583,17 +671,17 @@ async def start_expand(idea_id: str, instruction: str) -> str:
         updated_at=now,
         current_step="Starting...",
     )
-    _has_running_task = True
+    _running_count += 1
     asyncio.create_task(run_expand_pipeline(task_id, idea_id, instruction))
     return task_id
 
 
 async def start_collect(source: str) -> str:
     """Start a collect task. Returns task_id."""
-    global _has_running_task
+    global _running_count
 
-    if _has_running_task:
-        raise RuntimeError("A task is already running")
+    if _running_count >= _MAX_CONCURRENT:
+        raise RuntimeError(f"Max concurrent tasks reached ({_MAX_CONCURRENT})")
 
     task_id = str(uuid.uuid4())[:8]
     now = _now()
@@ -605,14 +693,14 @@ async def start_collect(source: str) -> str:
         updated_at=now,
         current_step="Starting...",
     )
-    _has_running_task = True
+    _running_count += 1
     asyncio.create_task(run_collect_pipeline(task_id, source))
     return task_id
 
 
 async def run_recommend_pipeline(task_id: str, persona_id: str):
     """Use Selector Agent to recommend contents for publishing."""
-    global _has_running_task
+    global _running_count
     t = _tasks[task_id]
 
     try:
@@ -670,6 +758,23 @@ async def run_recommend_pipeline(task_id: str, persona_id: str):
 
         result = json.loads(raw)
 
+        # Persist recommendations to database
+        recs = result.get("recommendations", [])
+        if recs:
+            from db import get_connection
+            conn = get_connection()
+            try:
+                for r in recs:
+                    cid = r.get("content_id", "")
+                    reason = r.get("reason", "")
+                    conn.execute(
+                        "INSERT INTO recommendations (persona_id, content_id, reason, task_id) VALUES (?, ?, ?, ?)",
+                        (persona_id, cid, reason, task_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
         t.status = "completed"
         t.result = result
         t.current_step = "Done"
@@ -681,15 +786,15 @@ async def run_recommend_pipeline(task_id: str, persona_id: str):
         t.current_step = "Failed"
         t.updated_at = _now()
     finally:
-        _has_running_task = False
+        _running_count -= 1
 
 
 async def start_recommend(persona_id: str) -> str:
     """Start a recommend task. Returns task_id."""
-    global _has_running_task
+    global _running_count
 
-    if _has_running_task:
-        raise RuntimeError("A task is already running")
+    if _running_count >= _MAX_CONCURRENT:
+        raise RuntimeError(f"Max concurrent tasks reached ({_MAX_CONCURRENT})")
 
     task_id = str(uuid.uuid4())[:8]
     now = _now()
@@ -701,17 +806,17 @@ async def start_recommend(persona_id: str) -> str:
         updated_at=now,
         current_step="Starting...",
     )
-    _has_running_task = True
+    _running_count += 1
     asyncio.create_task(run_recommend_pipeline(task_id, persona_id))
     return task_id
 
 
 async def start_revise(content_id: str, feedback: str) -> str:
     """Start a revise task. Returns task_id."""
-    global _has_running_task
+    global _running_count
 
-    if _has_running_task:
-        raise RuntimeError("A task is already running")
+    if _running_count >= _MAX_CONCURRENT:
+        raise RuntimeError(f"Max concurrent tasks reached ({_MAX_CONCURRENT})")
 
     task_id = str(uuid.uuid4())[:8]
     now = _now()
@@ -723,7 +828,7 @@ async def start_revise(content_id: str, feedback: str) -> str:
         updated_at=now,
         current_step="Starting...",
     )
-    _has_running_task = True
+    _running_count += 1
     asyncio.create_task(run_revise_pipeline(task_id, content_id, feedback))
     return task_id
 

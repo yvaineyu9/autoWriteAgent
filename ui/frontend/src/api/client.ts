@@ -7,6 +7,7 @@ import type {
   MetricsOut,
   PersonaOut,
   DashboardData,
+  RecommendBatch,
 } from '../types'
 
 const BASE = '/api'
@@ -33,6 +34,9 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   })
   if (!res.ok) {
+    if (res.status === 409) {
+      throw new Error('已达最大并发数（3 个），请稍后再试')
+    }
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail || res.statusText)
   }
@@ -110,4 +114,11 @@ export const api = {
   // Select
   selectRecommend: (persona_id: string) => post<{ task_id: string }>(`/select/recommend?persona_id=${encodeURIComponent(persona_id)}`, {}),
   selectPublish: (data: { content_ids: string[]; persona_id: string }) => post<{ published: number; content_ids: string[] }>('/select/publish', data),
+  selectHistory: (persona_id: string) => get<RecommendBatch[]>('/select/history', { persona_id }),
+  // Feishu
+  sendToFeishu: (content_id: string) =>
+    post<{ ok: boolean; message_id: string; image_count: number }>(
+      `/contents/${encodeURIComponent(content_id)}/send-to-feishu`,
+      {},
+    ),
 }

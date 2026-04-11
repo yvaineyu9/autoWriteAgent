@@ -48,6 +48,7 @@ const typesetImages = ref<string[]>([])
 const typesetting = ref(false)
 const showTypeset = ref(false)
 const typesetContentId = ref('')
+const sendingFeishu = ref(false)
 
 // Delete confirm
 const showDeleteConfirm = ref(false)
@@ -318,6 +319,20 @@ async function doTypeset() {
   }
 }
 
+async function doSendFeishu() {
+  if (!typesetContentId.value || sendingFeishu.value) return
+  sendingFeishu.value = true
+  try {
+    const res = await api.sendToFeishu(typesetContentId.value)
+    showToast(`已发送 ${res.image_count} 张到飞书群，状态已改为已发布`)
+    await load()
+  } catch (e: any) {
+    showToast(e.message || '发送失败', 'error')
+  } finally {
+    sendingFeishu.value = false
+  }
+}
+
 const personas = injectedPersonas
 
 const platformLabel: Record<string, string> = {
@@ -568,6 +583,14 @@ const platformLabel: Record<string, string> = {
         </div>
         <div v-else class="empty">无图片</div>
         <div class="modal-actions">
+          <button
+            v-if="typesetImages.length"
+            class="btn btn-primary"
+            :disabled="sendingFeishu"
+            @click="doSendFeishu"
+          >
+            {{ sendingFeishu ? '发送中...' : '一键发飞书群' }}
+          </button>
           <button class="btn btn-secondary" @click="showTypeset = false">关闭</button>
         </div>
       </div>

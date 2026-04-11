@@ -7,13 +7,50 @@ from services.db_service import list_contents, get_content
 router = APIRouter()
 
 
+@router.get("/select/history")
+def get_recommend_history(persona_id: str = Query("yuejian"), limit: int = Query(50)):
+    """Get AI recommendation history grouped by batch (task_id)."""
+    from db import get_connection
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT r.id, r.persona_id, r.content_id, r.reason, r.task_id, r.created_at,
+                      c.title as content_title, c.status as content_status, c.platform
+               FROM recommendations r
+               LEFT JOIN contents c ON r.content_id = c.content_id
+               WHERE r.persona_id = ?
+               ORDER BY r.created_at DESC
+               LIMIT ?""",
+            (persona_id, limit),
+        ).fetchall()
+
+        # Group by task_id
+        batches: dict = {}
+        for r in rows:
+            row = dict(r)
+            tid = row["task_id"] or "unknown"
+            if tid not in batches:
+                batches[tid] = {"task_id": tid, "created_at": row["created_at"], "items": []}
+            batches[tid]["items"].append({
+                "content_id": row["content_id"],
+                "content_title": row["content_title"],
+                "content_status": row["content_status"],
+                "platform": row["platform"],
+                "reason": row["reason"],
+            })
+
+        return list(batches.values())
+    finally:
+        conn.close()
+
+
 @router.post("/select/recommend", status_code=202)
 async def select_recommend(persona_id: str = Query("yuejian")):
     """Start AI recommendation task for final contents."""
     from services.agent_runner import start_recommend, has_running_task
 
     if has_running_task():
-        raise HTTPException(409, "a task is already running, please wait")
+        raise HTTPException(409, "max concurrent tasks reached (3), please wait")
     task_id = await start_recommend(persona_id)
     return {"task_id": task_id}
 

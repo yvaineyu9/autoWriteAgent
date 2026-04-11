@@ -67,6 +67,18 @@ export interface PersonaOut {
   platforms: string[]
 }
 
+export interface RecommendBatch {
+  task_id: string
+  created_at: string
+  items: Array<{
+    content_id: string
+    content_title: string | null
+    content_status: string | null
+    platform: string | null
+    reason: string | null
+  }>
+}
+
 export interface DashboardData {
   ideas_pending: number
   contents_final: number

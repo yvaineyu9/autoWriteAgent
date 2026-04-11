@@ -111,74 +111,88 @@ function goSelect() { router.push('/select') }
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
+  gap: 14px;
+  margin-bottom: 28px;
 }
 
 .stat-card {
-  background: #fff;
-  border-radius: 10px;
-  padding: 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 22px 20px;
   text-align: center;
+  transition: all var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .stat-value {
-  font-size: 32px;
-  font-weight: 700;
-  color: #1976d2;
+  font-size: 36px;
+  font-weight: 750;
+  color: var(--accent);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
 }
 
 .stat-label {
-  font-size: 13px;
-  color: #888;
-  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  margin-top: 6px;
+  font-weight: 450;
 }
 
 .quick-actions {
   display: flex;
-  gap: 16px;
-  margin-bottom: 32px;
+  gap: 14px;
+  margin-bottom: 36px;
 }
 
 .action-card {
   flex: 1;
-  background: #fff;
-  border: 2px dashed #ddd;
-  border-radius: 10px;
-  padding: 24px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px 18px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-family: inherit;
+  box-shadow: var(--shadow-sm);
 }
 
 .action-card:hover {
-  border-color: #1976d2;
-  background: #f5faff;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.12);
+  transform: translateY(-2px);
 }
 
 .action-icon {
-  font-size: 28px;
-  color: #1976d2;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 12px;
+}
+
+.action-card:hover .action-icon {
+  background: rgba(99, 102, 241, 0.15);
 }
 
 .action-text {
-  font-size: 15px;
-  font-weight: 500;
-  color: #333;
-}
-
-.section-header {
-  margin-bottom: 12px;
-}
-
-.section-header h2 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #333;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--text-1);
 }
 </style>

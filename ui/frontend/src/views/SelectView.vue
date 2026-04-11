@@ -47,6 +47,24 @@
       </div>
     </div>
 
+    <!-- History -->
+    <div class="section-header" style="margin-top:36px">
+      <h2>推荐历史</h2>
+    </div>
+    <div v-if="history.length === 0" class="empty" style="padding:24px">暂无推荐记录</div>
+    <div v-else class="history-list">
+      <div v-for="batch in history" :key="batch.task_id" class="history-batch">
+        <div class="history-time">{{ batch.created_at }}</div>
+        <div class="history-items">
+          <div v-for="item in batch.items" :key="item.content_id" class="history-item">
+            <span class="history-title">{{ item.content_title || item.content_id }}</span>
+            <span v-if="item.content_status" :class="'badge badge-' + item.content_status">{{ statusLabel(item.content_status) }}</span>
+            <span v-if="item.reason" class="history-reason">{{ item.reason }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div v-if="toast" :class="'toast toast-' + toast.type">{{ toast.msg }}</div>
   </div>
@@ -57,13 +75,14 @@ import { ref, inject, watch, onMounted, onUnmounted } from 'vue'
 import type { Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api/client'
-import type { ContentOut } from '../types'
+import type { ContentOut, RecommendBatch } from '../types'
 
 const router = useRouter()
 const personaId = inject<Ref<string>>('currentPersona')!
 
 const contents = ref<ContentOut[]>([])
 const selectedIds = ref<string[]>([])
+const history = ref<RecommendBatch[]>([])
 const loading = ref(false)
 const publishing = ref(false)
 const recommending = ref(false)
@@ -81,8 +100,21 @@ async function loadContents() {
   loading.value = false
 }
 
-onMounted(loadContents)
-watch(personaId, () => { selectedIds.value = []; recommendations.value = {}; loadContents() })
+async function loadHistory() {
+  if (!personaId.value) return
+  try {
+    history.value = await api.selectHistory(personaId.value)
+  } catch { /* ignore */ }
+}
+
+const statusLabels: Record<string, string> = {
+  draft: '草稿', final: '定稿', publishing: '发布中', published: '已发布',
+  revising: '修订中', pending: '待处理', archived: '已归档',
+}
+function statusLabel(s: string) { return statusLabels[s] || s }
+
+onMounted(() => { loadContents(); loadHistory() })
+watch(personaId, () => { selectedIds.value = []; recommendations.value = {}; loadContents(); loadHistory() })
 onUnmounted(() => { if (recommendPollTimer) clearInterval(recommendPollTimer) })
 
 function toggleSelect(id: string) {
@@ -129,6 +161,7 @@ async function doRecommend() {
             selectedIds.value = newSelected
             recommendations.value = newReasons
             showToast('success', `AI 推荐了 ${recs.length} 篇文章`)
+            loadHistory()
           } else {
             showToast('success', 'AI 未推荐任何文章')
           }
@@ -173,28 +206,32 @@ async function doPublish() {
 .select-card {
   display: flex;
   align-items: center;
-  gap: 14px;
-  background: #fff;
-  border: 2px solid #eee;
-  border-radius: 10px;
-  padding: 16px;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--transition);
+  box-shadow: var(--shadow-sm);
 }
 
 .select-card:hover {
-  border-color: #90caf9;
+  border-color: #c7c9f7;
+  box-shadow: var(--shadow-md);
 }
 
 .select-card.selected {
-  border-color: #1976d2;
-  background: #f5faff;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08);
 }
 
 .select-check input {
   width: 18px;
   height: 18px;
   cursor: pointer;
+  accent-color: var(--accent);
 }
 
 .select-info {
@@ -202,9 +239,10 @@ async function doPublish() {
 }
 
 .select-title {
-  font-size: 15px;
-  font-weight: 500;
-  margin-bottom: 6px;
+  font-size: 14.5px;
+  font-weight: 550;
+  margin-bottom: 7px;
+  color: var(--text-1);
 }
 
 .select-meta {
@@ -212,36 +250,90 @@ async function doPublish() {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #888;
+  color: var(--text-3);
 }
 
 .select-score {
-  color: #1976d2;
-  font-weight: 500;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .select-date {
-  color: #aaa;
+  color: var(--text-3);
 }
 
 .select-reason {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 12px;
-  color: #1976d2;
-  background: #e3f2fd;
-  padding: 4px 8px;
-  border-radius: 4px;
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.06);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--accent);
 }
 
 .ai-recommend-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  border-radius: 6px;
-  background: #e3f2fd;
-  color: #1565c0;
+  padding: 11px 16px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: 13px;
-  margin-bottom: 16px;
+  font-weight: 500;
+  margin-bottom: 18px;
+  border: 1px solid rgba(99, 102, 241, 0.12);
+}
+
+/* History */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-batch {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.history-time {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.history-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.history-title {
+  font-weight: 520;
+  color: var(--text-1);
+}
+
+.history-reason {
+  font-size: 12px;
+  color: var(--text-3);
+  flex-basis: 100%;
+  padding-left: 2px;
+  border-left: 2px solid var(--border);
+  margin-left: 0;
+  padding: 2px 0 2px 10px;
 }
 </style>

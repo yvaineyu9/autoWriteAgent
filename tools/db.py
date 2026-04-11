@@ -12,7 +12,7 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "autowrite.db")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 -- 灵感
@@ -166,6 +166,12 @@ def _migrate(conn: sqlite3.Connection):
     if current < 2:
         _migrate_v2(conn)
 
+    if current < 3:
+        _migrate_v3(conn)
+
+    if current < 4:
+        _migrate_v4(conn)
+
     conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
     conn.commit()
 
@@ -191,6 +197,62 @@ def _migrate_v2(conn: sqlite3.Connection):
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_note_id ON ideas(note_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_source_url ON ideas(source_url)")
+
+
+def _migrate_v3(conn: sqlite3.Connection):
+    """新增 AI 推荐记录表。"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS recommendations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            persona_id    TEXT NOT NULL,
+            content_id    TEXT NOT NULL,
+            reason        TEXT,
+            task_id       TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (content_id) REFERENCES contents(content_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_recommendations_persona ON recommendations(persona_id, created_at);
+    """)
+
+
+def _migrate_v4(conn: sqlite3.Connection):
+    """删除 recommendations 表上的 UNIQUE(persona_id, content_id) 约束。
+
+    早期版本在这张表上加了 UNIQUE 约束，跟"推荐历史按 task_id 分组"
+    的 UI 语义矛盾 —— 同一篇文章在不同批次只能被推荐一次。
+    这里把老表重建成无 UNIQUE 的版本，数据全部保留。
+    新库因为 _migrate_v3 本来就没写 UNIQUE，不会走到这里做重建。
+    """
+    rec_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='recommendations'"
+    ).fetchone()
+    if not rec_exists:
+        return
+
+    # UNIQUE 约束在 SQLite 里会生成 sqlite_autoindex_* 索引，用它作判据
+    has_unique = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' "
+        "AND tbl_name='recommendations' AND name LIKE 'sqlite_autoindex_%'"
+    ).fetchone()
+    if not has_unique:
+        return
+
+    conn.executescript("""
+        CREATE TABLE recommendations_new (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            persona_id    TEXT NOT NULL,
+            content_id    TEXT NOT NULL,
+            reason        TEXT,
+            task_id       TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (content_id) REFERENCES contents(content_id)
+        );
+        INSERT INTO recommendations_new (id, persona_id, content_id, reason, task_id, created_at)
+            SELECT id, persona_id, content_id, reason, task_id, created_at FROM recommendations;
+        DROP TABLE recommendations;
+        ALTER TABLE recommendations_new RENAME TO recommendations;
+        CREATE INDEX IF NOT EXISTS idx_recommendations_persona ON recommendations(persona_id, created_at);
+    """)
 
 
 def init_db():

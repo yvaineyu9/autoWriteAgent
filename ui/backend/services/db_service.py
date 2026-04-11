@@ -280,6 +280,36 @@ def update_publication(pub_id: int, status: str, post_url: Optional[str] = None)
         conn.close()
 
 
+def mark_content_published(content_id: str, note: str = "") -> Optional[dict]:
+    """Force content.status -> 'published' and write a status_log row.
+
+    Used by lightweight publishing paths (e.g., send-to-feishu) that don't
+    go through the publications table but still want content status to reflect
+    that the content has been published somewhere.
+    """
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT status FROM contents WHERE content_id = ?", (content_id,)
+        ).fetchone()
+        if not row:
+            return None
+        old_status = row["status"]
+        conn.execute(
+            "UPDATE contents SET status='published', updated_at=datetime('now','localtime') WHERE content_id = ?",
+            (content_id,),
+        )
+        conn.execute(
+            "INSERT INTO status_log (content_id, from_status, to_status, operator, note) VALUES (?, ?, 'published', 'ui', ?)",
+            (content_id, old_status, note),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM contents WHERE content_id = ?", (content_id,)).fetchone()
+        return dict(updated) if updated else None
+    finally:
+        conn.close()
+
+
 def update_idea_status(idea_id: str, status: str):
     conn = get_connection()
     try:

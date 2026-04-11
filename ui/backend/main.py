@@ -5,12 +5,25 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools"))
 
+# Load PROJECT_ROOT/.env into os.environ before importing routers.
+# .env is gitignored and only present on the deployment host.
+_env_path = os.path.join(PROJECT_ROOT, ".env")
+if os.path.isfile(_env_path):
+    with open(_env_path, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            _v = _v.strip().strip('"').strip("'")
+            os.environ.setdefault(_k.strip(), _v)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routers import ideas, contents, publications, tasks, personas, dashboard, select
+from routers import ideas, contents, publications, tasks, personas, dashboard, select, feishu
 
 app = FastAPI(title="autoWriteAgent UI")
 
@@ -28,6 +41,7 @@ app.include_router(tasks.router, prefix="/api")
 app.include_router(personas.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(select.router, prefix="/api")
+app.include_router(feishu.router, prefix="/api")
 
 # Serve frontend static files
 DIST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
