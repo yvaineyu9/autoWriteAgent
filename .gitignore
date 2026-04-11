@@ -46,3 +46,7 @@ tools/browser/.ocr_vision_bin
 
 # Node
 node_modules/
+
+# Vite
+.vite/
+ui/frontend/dist/
