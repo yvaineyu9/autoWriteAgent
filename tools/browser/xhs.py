@@ -209,9 +209,17 @@ class XhsScraper:
         self._scrape_images_ocr(page, note)
 
         # 判断 capture_status
-        if not note.title and not note.content_text:
+        has_ocr = any(t.strip() for t in note.image_ocr)
+        if not note.title and not note.content_text and not has_ocr:
             note.capture_status = "failed"
             note.failure_reason = "未能提取标题和正文"
+        elif not note.title and not note.content_text and has_ocr:
+            # 图片文字笔记：用 OCR 第一行作为标题
+            first_ocr = next((t.strip() for t in note.image_ocr if t.strip()), "")
+            first_line = first_ocr.split('\n')[0][:50]
+            note.title = first_line
+            note.capture_status = "partial"
+            note.failure_reason = "图片文字笔记，标题取自 OCR"
         elif not note.title or not note.content_text:
             note.capture_status = "partial"
             note.failure_reason = "部分字段缺失"
@@ -576,10 +584,12 @@ class XhsScraper:
     def _dismiss_popups(self, page: Page):
         """关闭可能弹出的登录/下载弹窗。"""
         popup_close_selectors = [
+            '.login-modal button.close-icon',
+            '.icon-btn-wrapper.close-button',
+            '.reds-modal button.close-icon',
             '[class*="close-btn"]',
             '.close-button',
             'button[aria-label="close"]',
-            '[class*="mask"]',
             '.login-mask .close',
         ]
         for sel in popup_close_selectors:
